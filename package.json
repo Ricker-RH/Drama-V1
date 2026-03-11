@@ -1,0 +1,17 @@
+{
+  "name": "immersion-chronicles-web",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w apps/api",
+    "dev:3001": "PORT=3001 npm run dev -w apps/api",
+    "start": "npm run start -w apps/api"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.5"
+  }
+}
