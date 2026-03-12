@@ -3508,6 +3508,14 @@ function pageWorldDetail() {
             : `<p class="world-comments-empty">还没有评论，来抢首评吧。</p>`
         }
       </section>
+
+      <div class="world-detail-floatbar" aria-label="剧情操作栏">
+        <div class="world-detail-floatbar-left">
+          <button class="world-detail-floatbar-btn ghost" data-action="noop">功能1</button>
+          <button class="world-detail-floatbar-btn ghost" data-action="noop">功能2</button>
+        </div>
+        <button class="world-detail-floatbar-btn start" data-go="#/play/core">开始抓马</button>
+      </div>
     </section>
   `);
 }
@@ -3684,7 +3692,16 @@ function pushThreadMessage(messageId, text, from = "me", extra = {}) {
   const payload = extra.payload && typeof extra.payload === "object" ? extra.payload : {};
   const createdAt = String(extra.createdAt || extra.created_at || "").trim();
   const resolvedTime = createdAt ? formatThreadClock(createdAt) : nowClockText();
-  messages.push({ from, type: messageType, payload, text, time: resolvedTime, read: from !== "me" });
+  messages.push({
+    id: String(extra.id || ""),
+    from,
+    type: messageType,
+    payload,
+    text,
+    time: resolvedTime,
+    createdAt: createdAt || null,
+    read: from !== "me"
+  });
   if (from === "me") {
     updateMessageInboxPreview(messageId, text, { time: resolvedTime });
     markMessageRead(messageId);
@@ -3696,6 +3713,49 @@ function pushThreadMessage(messageId, text, from = "me", extra = {}) {
     item.badge = (Number(item.badge) || 0) + 1;
     moveMessageToTop(messageId);
   }
+}
+
+function upsertThreadMessageFromServer(messageId, row, currentUserId) {
+  if (!messageId || !row) return false;
+  const messages = ensureMessageThread(messageId);
+  const msgId = String(row?.id || "").trim();
+  const senderId = String(row?.sender_id || "").trim();
+  const createdAt = String(row?.created_at || "").trim();
+  const from = senderId === String(currentUserId || "") ? "me" : "other";
+  const normalized = {
+    id: msgId,
+    from,
+    type: String(row?.message_type || "text"),
+    payload: row?.payload && typeof row.payload === "object" ? row.payload : {},
+    text: String(row?.content || ""),
+    time: formatThreadClock(createdAt),
+    createdAt: createdAt || null,
+    read: from === "me" ? Boolean(row?.read_by_peer) : true
+  };
+  const existsAt = msgId ? messages.findIndex((item) => String(item?.id || "") === msgId) : -1;
+  if (existsAt >= 0) {
+    messages[existsAt] = { ...messages[existsAt], ...normalized };
+    return false;
+  }
+  messages.push(normalized);
+  return true;
+}
+
+function applyPeerReadReceipt(messageId, lastReadAt) {
+  const readTs = new Date(String(lastReadAt || "")).getTime();
+  if (!Number.isFinite(readTs)) return false;
+  const messages = ensureMessageThread(messageId);
+  let changed = false;
+  messages.forEach((msg) => {
+    if (msg?.from !== "me") return;
+    if (msg.read) return;
+    const createdTs = new Date(String(msg.createdAt || "")).getTime();
+    if (Number.isFinite(createdTs) && createdTs <= readTs) {
+      msg.read = true;
+      changed = true;
+    }
+  });
+  return changed;
 }
 
 function formatThreadClock(isoTime) {
@@ -3728,6 +3788,7 @@ function toThreadViewMessages(rows, currentUserId) {
     payload: row?.payload && typeof row.payload === "object" ? row.payload : {},
     text: String(row?.content || ""),
     time: formatThreadClock(row?.created_at),
+    createdAt: String(row?.created_at || ""),
     read: Boolean(row?.read_by_peer)
   }));
 }
@@ -3744,6 +3805,7 @@ function threadViewChanged(prev = [], next = []) {
     if (JSON.stringify(a.payload || {}) !== JSON.stringify(b.payload || {})) return true;
     if ((a.from || "") !== (b.from || "")) return true;
     if ((a.time || "") !== (b.time || "")) return true;
+    if ((a.createdAt || "") !== (b.createdAt || "")) return true;
     if (Boolean(a.read) !== Boolean(b.read)) return true;
   }
   return false;
@@ -3784,7 +3846,7 @@ function shouldHeartbeatPresence(conversationId) {
   if (!key) return false;
   const now = Date.now();
   const last = Number(uiState.messagePresenceBeatAt[key] || 0);
-  if (now - last < 1500) return false;
+  if (now - last < 10_000) return false;
   uiState.messagePresenceBeatAt[key] = now;
   return true;
 }
@@ -8492,6 +8554,10 @@ function ensureDramaHeroTimer() {
 let messageRealtimeTimer;
 let messageRealtimeSyncing = false;
 let messageRealtimeSyncRunner = null;
+let messageRealtimeEventSource = null;
+let messageRealtimeConnectedUserId = "";
+let messageRealtimeReconnectTimer = null;
+
 function scrollThreadToBottom(retry = 0) {
   requestAnimationFrame(() => {
     const wrap = document.querySelector(".dm-modern-messages");
@@ -8509,16 +8575,28 @@ function scrollThreadToBottom(retry = 0) {
 }
 function ensureMessageRealtimeSync() {
   const canSync = uiState.isLoggedIn && Boolean(uiState.currentUserId);
-  if (!canSync && messageRealtimeTimer) {
-    clearInterval(messageRealtimeTimer);
-    messageRealtimeTimer = undefined;
-    messageRealtimeSyncRunner = null;
-    return;
-  }
   if (!canSync) {
+    if (messageRealtimeTimer) {
+      clearInterval(messageRealtimeTimer);
+      messageRealtimeTimer = undefined;
+    }
+    if (messageRealtimeReconnectTimer) {
+      clearTimeout(messageRealtimeReconnectTimer);
+      messageRealtimeReconnectTimer = null;
+    }
+    if (messageRealtimeEventSource) {
+      messageRealtimeEventSource.close();
+      messageRealtimeEventSource = null;
+    }
+    messageRealtimeConnectedUserId = "";
     messageRealtimeSyncRunner = null;
     return;
   }
+  const closeStream = () => {
+    if (!messageRealtimeEventSource) return;
+    messageRealtimeEventSource.close();
+    messageRealtimeEventSource = null;
+  };
   const runSync = () => {
     if (messageRealtimeSyncing) return;
     messageRealtimeSyncing = true;
@@ -8555,10 +8633,121 @@ function ensureMessageRealtimeSync() {
       });
   };
   messageRealtimeSyncRunner = runSync;
+  const onRealtimeNewMessage = (payload) => {
+    const conversationId = String(payload?.conversationId || "").trim();
+    if (!conversationId) return;
+    const message = payload?.message && typeof payload.message === "object" ? payload.message : null;
+    if (!message) return;
+    const activeId = getActiveConversationId();
+    const onThread = (window.location.hash || "").startsWith("#/messages/thread");
+    const isActiveThread = onThread && activeId === conversationId;
+    const inserted = upsertThreadMessageFromServer(conversationId, message, uiState.currentUserId);
+    const fromMe = String(message.sender_id || "") === String(uiState.currentUserId || "");
+    const preview = String(message.content || "").trim() || "新消息";
+    const time = formatThreadClock(message.created_at);
+    updateMessageInboxPreview(conversationId, preview, { time });
+    const inboxItem = getMessageInboxItem(conversationId);
+    if (!inboxItem) {
+      MESSAGE_INBOX.unshift({
+        id: conversationId,
+        name: "会话",
+        preview,
+        type: "私聊",
+        time,
+        badge: 0
+      });
+    }
+    if (fromMe || isActiveThread) {
+      markMessageRead(conversationId);
+    } else {
+      const item = getMessageInboxItem(conversationId);
+      if (item) item.badge = (Number(item.badge) || 0) + 1;
+    }
+    if (isActiveThread && shouldHeartbeatPresence(conversationId)) {
+      void markConversationReadOnServer(conversationId)
+        .then(() => {
+          uiState.messageReadAckConversationId = conversationId;
+          markMessageRead(conversationId);
+          render();
+        })
+        .catch(() => {
+          uiState.messagePresenceBeatAt[conversationId] = 0;
+        });
+    }
+    if (inserted || !fromMe || isActiveThread) {
+      render();
+      if (isActiveThread) scrollThreadToBottom();
+    }
+  };
+  const onRealtimeRead = (payload) => {
+    const conversationId = String(payload?.conversationId || "").trim();
+    const receipt = payload?.receipt && typeof payload.receipt === "object" ? payload.receipt : null;
+    if (!conversationId || !receipt) return;
+    const readerId = String(receipt.userId || "").trim();
+    const lastReadAt = String(receipt.lastReadAt || "").trim();
+    if (readerId === String(uiState.currentUserId || "")) {
+      markMessageRead(conversationId);
+      render();
+      return;
+    }
+    const prevPeer = uiState.messagePeerPresence[conversationId] || {};
+    uiState.messagePeerPresence[conversationId] = {
+      ...prevPeer,
+      lastReadAt,
+      online: true
+    };
+    const changed = applyPeerReadReceipt(conversationId, lastReadAt);
+    if (changed) render();
+  };
+
   runSync();
   if (!messageRealtimeTimer) {
-    messageRealtimeTimer = setInterval(runSync, 1000);
+    messageRealtimeTimer = setInterval(runSync, 30_000);
   }
+  const userId = String(uiState.currentUserId || "").trim();
+  if (!userId) return;
+  if (messageRealtimeConnectedUserId === userId && messageRealtimeEventSource) return;
+  closeStream();
+  messageRealtimeConnectedUserId = userId;
+  if (messageRealtimeReconnectTimer) {
+    clearTimeout(messageRealtimeReconnectTimer);
+    messageRealtimeReconnectTimer = null;
+  }
+  if (typeof window.EventSource !== "function") {
+    if (!messageRealtimeTimer) messageRealtimeTimer = setInterval(runSync, 2_000);
+    return;
+  }
+  const url = `${API_BASE}/messages/stream?userId=${encodeURIComponent(userId)}&_ts=${Date.now()}`;
+  messageRealtimeEventSource = new EventSource(url);
+  messageRealtimeEventSource.addEventListener("connected", () => {
+    runSync();
+  });
+  messageRealtimeEventSource.addEventListener("message:new", (event) => {
+    let payload = null;
+    try {
+      payload = JSON.parse(String(event?.data || "{}"));
+    } catch {
+      payload = null;
+    }
+    if (payload) onRealtimeNewMessage(payload);
+  });
+  messageRealtimeEventSource.addEventListener("conversation:read", (event) => {
+    let payload = null;
+    try {
+      payload = JSON.parse(String(event?.data || "{}"));
+    } catch {
+      payload = null;
+    }
+    if (payload) onRealtimeRead(payload);
+  });
+  messageRealtimeEventSource.onerror = () => {
+    closeStream();
+    if (messageRealtimeReconnectTimer) return;
+    messageRealtimeReconnectTimer = setTimeout(() => {
+      messageRealtimeReconnectTimer = null;
+      ensureMessageRealtimeSync();
+    }, 2_000);
+  };
 }
 
 document.addEventListener("click", (event) => {
@@ -9062,11 +9251,12 @@ document.addEventListener("click", (event) => {
       render();
       void sendMessageToThread(activeId, text)
         .then((message) => {
-          pushThreadMessage(activeId, text, "me", {
-            type: String(message?.message_type || "text"),
-            payload: message?.payload && typeof message.payload === "object" ? message.payload : {},
-            createdAt: String(message?.created_at || message?.createdAt || "")
+          upsertThreadMessageFromServer(activeId, message || {}, uiState.currentUserId);
+          updateMessageInboxPreview(activeId, String(message?.content || text), {
+            time: formatThreadClock(message?.created_at),
+            createdAt: String(message?.created_at || "")
           });
+          markMessageRead(activeId);
           uiState.messageReadAckConversationId = "";
           render();
           requestAnimationFrame(() => {

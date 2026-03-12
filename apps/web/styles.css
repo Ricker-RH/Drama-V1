@@ -6757,6 +6757,55 @@ body.world-detail-route .layout.explore-mode .content {
   gap: 16px;
 }
 
+body.world-detail-route .world-page {
+  padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+}
+
+.world-detail-floatbar {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  width: min(920px, calc(100vw - 28px));
+  border-radius: 16px;
+  border: 1px solid #f0edf7;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+  padding: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  z-index: 95;
+}
+
+.world-detail-floatbar-left {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.world-detail-floatbar-btn {
+  border: none;
+  border-radius: 12px;
+  height: 48px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.world-detail-floatbar-btn.ghost {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #4b5563;
+}
+
+.world-detail-floatbar-btn.start {
+  background: linear-gradient(135deg, #fb3f78 0%, #ff4d84 100%);
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(251, 63, 120, 0.28);
+}
+
 .ios-card {
   box-shadow: 0 8px 30px rgba(17, 24, 39, 0.06);
 }
@@ -10699,6 +10748,27 @@ body.message-thread-route .layout.explore-mode .content {
 
   .world-hero h1 {
     font-size: 24px;
+  }
+
+  body.world-detail-route .world-page {
+    padding-bottom: calc(172px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .world-detail-floatbar {
+    width: calc(100vw - 16px);
+    border-radius: 14px;
+    padding: 6px;
+    gap: 6px;
+    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .world-detail-floatbar-left {
+    gap: 6px;
+  }
+
+  .world-detail-floatbar-btn {
+    height: 44px;
+    font-size: 15px;
   }
 
   .world-hero {

@@ -2,14 +2,37 @@ import { json, parseBody } from "../core/http.js";
 import {
   findOrCreateDirectConversation,
   getConversationPeerPresence,
+  listConversationMemberUserIds,
   listUserInbox,
   listConversationMessages,
   markConversationRead,
   sendConversationMessage
 } from "../repos/message-repo.js";
 import { invalidateBootstrapCoreCache } from "./bootstrap.js";
+import { openMessageStream, publishMessageEventToUsers } from "../services/message-realtime.js";
+
+function toClock(dateLike) {
+  const dt = new Date(String(dateLike || ""));
+  if (Number.isNaN(dt.getTime())) return "刚刚";
+  const h = String(dt.getHours()).padStart(2, "0");
+  const m = String(dt.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
+}
 
 export async function handleMessages(req, res, pathname) {
+  if (req.method === "GET" && pathname === "/api/v1/messages/stream") {
+    const reqUrl = new URL(req.url, "http://127.0.0.1");
+    const userId = String(reqUrl.searchParams.get("userId") || "").trim();
+    if (!userId) {
+      return json(res, 400, {
+        code: "INVALID_INPUT",
+        message: "userId is required"
+      });
+    }
+    openMessageStream({ req, res, userId });
+    return true;
+  }
+
   if (req.method === "GET" && pathname === "/api/v1/messages/inbox") {
     const reqUrl = new URL(req.url, "http://127.0.0.1");
     const userId = String(reqUrl.searchParams.get("userId") || "").trim();
@@ -84,6 +107,12 @@ export async function handleMessages(req, res, pathname) {
       payload: body.payload || {},
       clientMessageId: body.clientMessageId || null
     });
+    const memberUserIds = await listConversationMemberUserIds(body.conversationId);
+    publishMessageEventToUsers(memberUserIds, "message:new", {
+      conversationId: body.conversationId,
+      message,
+      serverTime: new Date().toISOString()
+    });
     invalidateBootstrapCoreCache();
     return json(res, 201, { message });
   }
@@ -121,6 +150,12 @@ export async function handleMessages(req, res, pathname) {
     }
     try {
       const receipt = await markConversationRead({ conversationId, userId });
+      const memberUserIds = await listConversationMemberUserIds(conversationId);
+      publishMessageEventToUsers(memberUserIds, "conversation:read", {
+        conversationId,
+        receipt,
+        serverTime: new Date().toISOString()
+      });
       invalidateBootstrapCoreCache();
       return json(res, 200, { receipt });
     } catch (error) {

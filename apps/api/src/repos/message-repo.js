@@ -99,6 +99,19 @@ export async function sendConversationMessage({
   return message;
 }
 
+export async function listConversationMemberUserIds(conversationId) {
+  const safeId = String(conversationId || "").trim();
+  if (!safeId) return [];
+  const result = await query(
+    `select user_id
+     from conversation_members
+     where conversation_id = $1
+       and deleted_at is null`,
+    [safeId]
+  );
+  return result.rows.map((row) => String(row.user_id || "").trim()).filter(Boolean);
+}
+
 export async function findOrCreateDirectConversation({ initiatorId, targetUserId }) {
   if (!initiatorId || !targetUserId) throw new Error("INVALID_DIRECT_INPUT");
   if (initiatorId === targetUserId) throw new Error("INVALID_DIRECT_SELF");
@@ -221,8 +234,7 @@ export async function markConversationRead({ conversationId, userId }) {
     [conversationId]
   );
   const latest = latestRes.rows[0] || null;
-  const nowIso = new Date().toISOString();
-  await query(
+  const updated = await query(
     `update conversation_members
      set unread_count = 0,
          last_read_message_id = $3::uuid,
@@ -230,13 +242,15 @@ export async function markConversationRead({ conversationId, userId }) {
          updated_at = now()
      where conversation_id = $1
        and user_id = $2
-       and deleted_at is null`,
+       and deleted_at is null
+     returning last_read_at`,
     [conversationId, userId, latest?.id || null]
   );
+  const lastReadAt = updated.rows?.[0]?.last_read_at || new Date().toISOString();
   return {
     conversationId,
     userId,
     lastReadMessageId: latest?.id || null,
-    lastReadAt: nowIso
+    lastReadAt
   };
 }
