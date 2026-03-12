@@ -72,6 +72,18 @@ async function generateOneImage({
   }
 }
 
+function buildFallbackImageUrl({
+  prompt,
+  style,
+  negative,
+  width,
+  height,
+  seed
+}) {
+  const finalPrompt = `${prompt}, ${style}, highly detailed${negative ? `, avoid: ${negative}` : ""}`;
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(finalPrompt)}?seed=${seed}&width=${width}&height=${height}&nologo=true`;
+}
+
 export async function handlePaint(req, res, pathname) {
   if (req.method !== "POST" || pathname !== "/api/v1/paint/generate") return false;
 
@@ -88,9 +100,6 @@ export async function handlePaint(req, res, pathname) {
   }
 
   const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
-  if (!apiKey) {
-    return json(res, 500, { code: "OPENAI_KEY_MISSING", message: "OPENAI_API_KEY is missing" });
-  }
 
   const apiBase = String(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").trim();
   const size = mapRatioToSize(ratio);
@@ -101,18 +110,31 @@ export async function handlePaint(req, res, pathname) {
   try {
     const images = [];
     const failures = [];
+    const usePrimary = Boolean(apiKey);
+    if (!usePrimary) {
+      failures.push("OPENAI_KEY_MISSING");
+    }
     for (let idx = 0; idx < count; idx += 1) {
       const seed = Math.floor(Math.random() * 100000) + idx * 97;
       try {
-        const url = await generateOneImage({
-          apiBase,
-          apiKey,
-          prompt,
-          style,
-          negative,
-          size,
-          timeoutMs
-        });
+        const url = usePrimary
+          ? await generateOneImage({
+            apiBase,
+            apiKey,
+            prompt,
+            style,
+            negative,
+            size,
+            timeoutMs
+          })
+          : buildFallbackImageUrl({
+            prompt,
+            style,
+            negative,
+            width,
+            height,
+            seed
+          });
         images.push({
           id: `paint_${Date.now()}_${idx}`,
           url,
@@ -122,6 +144,21 @@ export async function handlePaint(req, res, pathname) {
         });
       } catch (error) {
         failures.push(error instanceof Error ? error.message : "unknown");
+        const fallbackUrl = buildFallbackImageUrl({
+          prompt,
+          style,
+          negative,
+          width,
+          height,
+          seed
+        });
+        images.push({
+          id: `paint_${Date.now()}_${idx}`,
+          url: fallbackUrl,
+          seed,
+          width,
+          height
+        });
       }
     }
 
