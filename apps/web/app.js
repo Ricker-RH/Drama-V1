@@ -400,6 +400,8 @@ const uiState = {
   communityComposeVisibility: "公开 · 社区内",
   communityComposeSync: true,
   communityPostPublished: false,
+  communityGroupJoining: false,
+  communityGroupFeedback: "",
   communityPostMeta: {},
   communityCommentDraft: "",
   communityAnnounceDraft: "",
@@ -1273,6 +1275,10 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
       : `<span class="page-title-spacer"></span>`;
   const mobileAddon = mobileAddonHtml.trim();
   const mobileAddonForRender = showMobileTopBar ? mobileAddon : "";
+  const messageUnreadTotal = getMessageUnreadTotal();
+  const messageUnreadBadge = messageUnreadTotal > 0
+    ? `<span class="xh-mobile-bottom-badge">${formatMessageUnreadCount(messageUnreadTotal)}</span>`
+    : "";
 
   if (isPlayRoute) {
     return `
@@ -1422,7 +1428,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
         <button class="xh-mobile-bottom-item ${isMobilePlazaActive ? "active" : ""}" data-go="#/theater/home">广场</button>
         <button class="xh-mobile-bottom-item ${isMobileCommunityActive ? "active" : ""}" data-go="#/community/home">社区</button>
         <button class="xh-mobile-bottom-plus ${isMobileWorkshopActive ? "active" : ""}" data-go="#/workshop/world" aria-label="创作中心">＋</button>
-        <button class="xh-mobile-bottom-item ${isMobileMessageActive ? "active" : ""}" data-go="#/messages/chat">消息</button>
+        <button class="xh-mobile-bottom-item ${isMobileMessageActive ? "active" : ""}" data-go="#/messages/chat">消息${messageUnreadBadge}</button>
         <button class="xh-mobile-bottom-item ${isMobileMeActive ? "active" : ""}" data-go="#/me/home">我的</button>
       </nav>
     `
@@ -3734,6 +3740,20 @@ function getMessageInboxItem(messageId) {
   return MESSAGE_INBOX.find((x) => x.id === messageId);
 }
 
+function getMessageUnreadTotal() {
+  return MESSAGE_INBOX.reduce((sum, item) => {
+    const value = Number(item?.badge || 0);
+    if (!Number.isFinite(value) || value <= 0) return sum;
+    return sum + Math.floor(value);
+  }, 0);
+}
+
+function formatMessageUnreadCount(value) {
+  const count = Number(value || 0);
+  if (!Number.isFinite(count) || count <= 0) return "";
+  return count > 99 ? "99+" : String(Math.floor(count));
+}
+
 function nowClockText() {
   const now = new Date();
   const h = String(now.getHours()).padStart(2, "0");
@@ -4437,6 +4457,39 @@ async function publishCommunityCreateAndPersist() {
     uiState.communityCreateError = error instanceof Error ? error.message : "创建失败，请稍后重试";
   } finally {
     uiState.communityCreateSubmitting = false;
+    render();
+  }
+}
+
+async function joinSelectedCommunity() {
+  const c = getSelectedCommunity();
+  if (!c?.id) return;
+  if (!uiState.isLoggedIn || !uiState.currentUserId) {
+    uiState.communityGroupFeedback = "请先登录后再加入社区";
+    setPostLoginRedirectHash(`#/community/group`);
+    window.location.hash = "#/auth/login";
+    render();
+    return;
+  }
+  if (c.joinedByMe) {
+    uiState.communityGroupFeedback = "你已加入该社区";
+    render();
+    return;
+  }
+  uiState.communityGroupJoining = true;
+  uiState.communityGroupFeedback = "";
+  render();
+  try {
+    await apiJson("/community/communities/join", {
+      communityId: c.id,
+      userId: uiState.currentUserId
+    });
+    await bootstrapClientData(uiState.currentUserId);
+    uiState.communityGroupFeedback = "加入成功";
+  } catch (error) {
+    uiState.communityGroupFeedback = error instanceof Error ? error.message : "加入失败，请稍后重试";
+  } finally {
+    uiState.communityGroupJoining = false;
     render();
   }
 }
@@ -7081,7 +7134,7 @@ function pageCommunityGroup() {
   const posts = getCommunityPosts(c.id);
   const previewMembers = getCommunityMemberPreviewList(c);
   const displayMemberCount = Math.max(0, toMetricCount(c.memberCount || 0));
-  const joinLabel = c.joinedByMe ? "已加入" : "加入";
+  const joinLabel = c.joinedByMe ? "已加入" : (uiState.communityGroupJoining ? "加入中..." : "加入");
   const list = uiState.communityGroupTab === "featured" ? posts.filter((p) => p.featured) : posts;
   const activeTabTotal =
     uiState.communityGroupTab === "members"
@@ -7110,10 +7163,11 @@ function pageCommunityGroup() {
           </div>
         </div>
         <div class="actions">
-          <button class="ghost">${joinLabel}</button>
+          <button class="ghost" data-action="community-join-group" ${c.joinedByMe || uiState.communityGroupJoining ? "disabled" : ""}>${joinLabel}</button>
           <button class="primary" data-go="#/community/group/post">发动态</button>
         </div>
       </article>
+      ${uiState.communityGroupFeedback ? `<p class="community-empty">${escapeHtml(uiState.communityGroupFeedback)}</p>` : ""}
 
       <div class="community-tab-switch community-group-tabs">
         <button class="${uiState.communityGroupTab === "dynamic" ? "active" : ""}" data-action="community-group-tab" data-tab="dynamic">动态</button>
@@ -10078,6 +10132,7 @@ document.addEventListener("click", (event) => {
     if (action === "open-community-group") {
       const id = actionTarget.getAttribute("data-id");
       if (id) uiState.selectedCommunityId = id;
+      uiState.communityGroupFeedback = "";
       window.location.hash = "#/community/group";
       return;
     }
@@ -10095,6 +10150,10 @@ document.addEventListener("click", (event) => {
         uiState.communityGroupTab = tab;
         render();
       }
+      return;
+    }
+    if (action === "community-join-group") {
+      void joinSelectedCommunity();
       return;
     }
     if (action === "community-compose-type") {
