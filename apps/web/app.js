@@ -8710,6 +8710,15 @@ let messageRealtimeEventSource = null;
 let messageRealtimeConnectedUserId = "";
 let messageRealtimeReconnectTimer = null;
 
+function getMessageRealtimePollIntervalMs() {
+  const route = getCurrentRoutePath();
+  if (document.visibilityState !== "visible") return 15_000;
+  if (route.startsWith("#/messages/thread")) return 1_500;
+  if (route.startsWith("#/messages/chat")) return 4_000;
+  if (route.startsWith("#/messages")) return 6_000;
+  return 30_000;
+}
+
 function scrollThreadToBottom(retry = 0) {
   requestAnimationFrame(() => {
     const wrap = document.querySelector(".dm-modern-messages");
@@ -8729,7 +8738,7 @@ function ensureMessageRealtimeSync() {
   const canSync = uiState.isLoggedIn && Boolean(uiState.currentUserId);
   if (!canSync) {
     if (messageRealtimeTimer) {
-      clearInterval(messageRealtimeTimer);
+      clearTimeout(messageRealtimeTimer);
       messageRealtimeTimer = undefined;
     }
     if (messageRealtimeReconnectTimer) {
@@ -8748,6 +8757,18 @@ function ensureMessageRealtimeSync() {
     if (!messageRealtimeEventSource) return;
     messageRealtimeEventSource.close();
     messageRealtimeEventSource = null;
+  };
+  const scheduleNextSync = () => {
+    if (messageRealtimeTimer) {
+      clearTimeout(messageRealtimeTimer);
+      messageRealtimeTimer = undefined;
+    }
+    const delay = getMessageRealtimePollIntervalMs();
+    messageRealtimeTimer = setTimeout(() => {
+      messageRealtimeTimer = undefined;
+      runSync();
+      scheduleNextSync();
+    }, delay);
   };
   const runSync = () => {
     if (messageRealtimeSyncing) return;
@@ -8853,9 +8874,7 @@ function ensureMessageRealtimeSync() {
   };
 
   runSync();
-  if (!messageRealtimeTimer) {
-    messageRealtimeTimer = setInterval(runSync, 30_000);
-  }
+  scheduleNextSync();
   const userId = String(uiState.currentUserId || "").trim();
   if (!userId) return;
   if (messageRealtimeConnectedUserId === userId && messageRealtimeEventSource) return;
@@ -8866,7 +8885,6 @@ function ensureMessageRealtimeSync() {
     messageRealtimeReconnectTimer = null;
   }
   if (typeof window.EventSource !== "function") {
-    if (!messageRealtimeTimer) messageRealtimeTimer = setInterval(runSync, 2_000);
     return;
   }
   const url = `${API_BASE}/messages/stream?userId=${encodeURIComponent(userId)}&_ts=${Date.now()}`;
