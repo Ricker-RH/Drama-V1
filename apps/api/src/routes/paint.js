@@ -99,27 +99,43 @@ export async function handlePaint(req, res, pathname) {
   const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 90000;
 
   try {
-    const jobs = new Array(count).fill(0).map((_, idx) => {
+    const images = [];
+    const failures = [];
+    for (let idx = 0; idx < count; idx += 1) {
       const seed = Math.floor(Math.random() * 100000) + idx * 97;
-      return generateOneImage({
-        apiBase,
-        apiKey,
-        prompt,
-        style,
-        negative,
-        size,
-        timeoutMs
-      }).then((url) => ({
-        id: `paint_${Date.now()}_${idx}`,
-        url,
-        seed,
-        width,
-        height
-      }));
-    });
+      try {
+        const url = await generateOneImage({
+          apiBase,
+          apiKey,
+          prompt,
+          style,
+          negative,
+          size,
+          timeoutMs
+        });
+        images.push({
+          id: `paint_${Date.now()}_${idx}`,
+          url,
+          seed,
+          width,
+          height
+        });
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : "unknown");
+      }
+    }
 
-    const images = await Promise.all(jobs);
-    return json(res, 200, { images });
+    if (!images.length) {
+      return json(res, 502, {
+        code: "IMAGE_GENERATION_FAILED",
+        message: failures[0] || "image generation failed"
+      });
+    }
+
+    return json(res, 200, {
+      images,
+      warnings: failures
+    });
   } catch (error) {
     return json(res, 502, {
       code: "IMAGE_GENERATION_FAILED",
@@ -127,4 +143,3 @@ export async function handlePaint(req, res, pathname) {
     });
   }
 }
-
