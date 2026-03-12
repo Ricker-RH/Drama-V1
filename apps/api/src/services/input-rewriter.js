@@ -33,7 +33,6 @@ function pickAnchor(sessionMeta = {}) {
     : {};
   return safeText(
     storyContext.npc
-    || storyContext.clues
     || storyContext.mainQuest
     || storyContext.title
     || "对方"
@@ -108,7 +107,6 @@ async function rewriteByModel(input, sessionMeta = {}) {
     const payload = {
       mode: String(sessionMeta?.mode || sessionMeta?.storyContext?.mode || ""),
       npc: String(sessionMeta?.storyContext?.npc || ""),
-      clues: String(sessionMeta?.storyContext?.clues || ""),
       input: String(input || "")
     };
     const resp = await fetch(`${apiBase}/chat/completions`, {
@@ -190,4 +188,3 @@ export async function rewriteUserInputForTurn({ input, sessionMeta }) {
     confidence: 0.6
   };
 }
-

@@ -43,7 +43,6 @@ function pickFallbackScenario(sessionMeta = {}) {
     storyContext.chapter,
     storyContext.mainQuest,
     storyContext.npc,
-    storyContext.clues,
     ...(Array.isArray(storyContext.intro) ? storyContext.intro : []),
     ...(Array.isArray(storyContext.opening) ? storyContext.opening : [])
   ]
@@ -120,7 +119,6 @@ function buildOpeningResult(input, scenario, sessionMeta = {}) {
   const chapter = String(storyContext.chapter || "序幕").trim();
   const mainQuest = String(storyContext.mainQuest || scenario.quest).trim();
   const npc = String(storyContext.npc || "关键角色").trim();
-  const clues = String(storyContext.clues || scenario.clue).trim();
   const introLines = (Array.isArray(storyContext.intro) ? storyContext.intro : [])
     .map((x) => String(x || "").trim())
     .filter(Boolean);
@@ -131,7 +129,7 @@ function buildOpeningResult(input, scenario, sessionMeta = {}) {
   const openingMerged = openingLines.length ? openingLines.join(" ") : "当前窗口正在收缩，局势会在短时间内快速升级。";
   return [
     `【${chapter}】${introMerged}${openingMerged} 你刚进入这一局，局面立刻给出反馈：眼前并非单点冲突，而是由规则、关系与时间窗口共同构成的动态棋盘。`,
-    `你的主任务已经非常明确：${mainQuest}。这不是一句口号，而是接下来每回合都要被验证的执行目标。你第一步拿到的信息切口集中在“${clues}”，它决定了你能否在后续回合里把主动权从对手手里夺回来。与此同时，${npc}所在的关系链也在观察你的动作质量，如果你能在当前回合做出低风险高价值的推进，你将获得稳定的协作空间；如果动作粗糙，后续会立刻被贴上不可控标签。`,
+    `你的主任务已经非常明确：${mainQuest}。这不是一句口号，而是接下来每回合都要被验证的执行目标。你第一步需要先确认局面边界与人物态度，再把观察转化为可执行动作。与此同时，${npc}所在的关系链也在观察你的动作质量，如果你能在当前回合做出低风险高价值的推进，你将获得稳定的协作空间；如果动作粗糙，后续会立刻被贴上不可控标签。`,
     `当前冲突已经浮出水面：${scenario.challenge}。这意味着你既不能原地等待，也不能盲目冲锋。你现在可执行的切入点有两个层次：第一层是“先校验关键线索和边界条件”，确保信息不被假象误导；第二层是“围绕任务目标进行一次可度量推进”，让每个动作都能沉淀为状态增量。你的优势在于你已经先动手验证，而不是被动接招；你的风险在于窗口期不会重来。只要接下来两回合维持正确顺序，你就能把这条主线从生存局推进到反制局。`
   ].join("");
 }
@@ -142,7 +140,6 @@ function buildTurnResult(input, scenario, sessionMeta = {}) {
     : {};
   const chapter = String(storyContext.chapter || "当前章节").trim();
   const quest = String(storyContext.mainQuest || scenario.quest).trim();
-  const clues = String(storyContext.clues || scenario.clue).trim();
   const npc = String(storyContext.npc || "关键角色").trim();
   const action = String(input || "推进主线").trim();
   const actionType = action.includes("核验") || action.includes("验证")
@@ -154,15 +151,15 @@ function buildTurnResult(input, scenario, sessionMeta = {}) {
         : "advance";
 
   if (actionType === "verify") {
-    return `你执行了“${action}”，并在【${chapter}】拿到第一层硬反馈：关键材料中的时间戳与登记路径并不完全一致，说明“${clues}”里至少有一项被人为处理过。围绕“${quest}”这条主线，你把模糊风险转成了可验证问题，这一步直接提升了你下一回合的决策质量。${npc} 对你“先验真再表态”的顺序给出了正向响应，但也提醒你窗口期不会等人，若不在下一回合把证据转化为行动，优势会被快速抹平。`;
+    return `你执行了“${action}”，并在【${chapter}】拿到第一层硬反馈：关键材料中的时间戳与登记路径并不完全一致，说明当前信息链存在人为处理痕迹。围绕“${quest}”这条主线，你把模糊风险转成了可验证问题，这一步直接提升了你下一回合的决策质量。${npc} 对你“先验真再表态”的顺序给出了正向响应，但也提醒你窗口期不会等人，若不在下一回合把证据转化为行动，优势会被快速抹平。`;
   }
   if (actionType === "social") {
     return `你执行了“${action}”，并在【${chapter}】拿到关系层反馈：你与${npc}建立了有限互信，对方愿意开放一部分内部视角，但明确要求你在后续回合拿出可落地结果。围绕“${quest}”这条主线，你把原本孤立的信息处理，升级成“信息+协作”的双线推进。代价是你的行动半径被放大后，也更容易被对手捕捉，一旦下一步失误，反制强度会成倍提高。`;
   }
   if (actionType === "public") {
-    return `你执行了“${action}”，并在【${chapter}】触发了外部反馈回路：舆论和对手都开始重新评估你的站位。围绕“${quest}”这条主线，这个动作帮你争取到短期关注与议价空间，但也同步抬高了容错成本。${npc} 侧给出的信号很清晰：你已经把局面从暗线拉到明线，接下来必须用“${clues}”中的可验证事实持续支撑，否则这次公开动作会反噬你的可信度。`;
+    return `你执行了“${action}”，并在【${chapter}】触发了外部反馈回路：舆论和对手都开始重新评估你的站位。围绕“${quest}”这条主线，这个动作帮你争取到短期关注与议价空间，但也同步抬高了容错成本。${npc} 侧给出的信号很清晰：你已经把局面从暗线拉到明线，接下来必须用可验证事实持续支撑，否则这次公开动作会反噬你的可信度。`;
   }
-  return `你执行了“${action}”，并在【${chapter}】拿到阶段性推进：围绕“${quest}”这条主线，你先稳住关键边界，再推动一段可度量进展。你把“${clues}”从背景信息转成了可执行抓手，局势因此向你倾斜了一步。${npc} 的态度从观察转向试探性配合，但对手侧已经开始调整应对节奏，你必须在下一回合继续兑现推进质量，才能把当前优势固化下来。`;
+  return `你执行了“${action}”，并在【${chapter}】拿到阶段性推进：围绕“${quest}”这条主线，你先稳住关键边界，再推动一段可度量进展。局势因此向你倾斜了一步。${npc} 的态度从观察转向试探性配合，但对手侧已经开始调整应对节奏，你必须在下一回合继续兑现推进质量，才能把当前优势固化下来。`;
 }
 
 function fallbackTurn({ provider = "error", providerReason = "llm_unavailable", retryable = false }) {
@@ -493,24 +490,6 @@ function hasRepeatedOpeningTemplate(nowResult = "", prevResult = "", mode = "") 
   return false;
 }
 
-function parseStoryClueTerms(sessionMeta = {}) {
-  const storyContext = sessionMeta?.storyContext && typeof sessionMeta.storyContext === "object"
-    ? sessionMeta.storyContext
-    : {};
-  const raw = [
-    storyContext.clues
-  ]
-    .map((x) => String(x || "").trim())
-    .filter(Boolean)
-    .join(" / ");
-  return raw
-    .split(/[，。；、,/\-|：:\s\[\]（）()·]+/)
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .filter((x) => x.length >= 2 && x.length <= 16)
-    .slice(0, 12);
-}
-
 function pickInputAnchors(input = "", max = 4) {
   const src = String(input || "");
   const stop = new Set(["然后", "接着", "继续", "一下", "这个", "那个", "这里", "那里", "可以", "帮我", "我们"]);
@@ -525,7 +504,6 @@ function pickInputAnchors(input = "", max = 4) {
 }
 
 function buildOpeningGenerationGuard(input, sessionMeta = {}, turnIndex = 1) {
-  const mode = normalizeMode(sessionMeta?.mode || sessionMeta?.storyContext?.mode || "");
   const prevFirst = firstSentence(sessionMeta?.previousTurn?.narrative || "", 56);
   const prevInput = String(sessionMeta?.previousTurn?.userInput || "");
   const bannedOpenings = [
@@ -542,38 +520,18 @@ function buildOpeningGenerationGuard(input, sessionMeta = {}, turnIndex = 1) {
   const anchorsFromInput = pickInputAnchors(input, 6);
   const anchorsFromPrevInput = pickInputAnchors(prevInput, 3);
   const requiredAnchorTokens = [...new Set([...anchorsFromInput, ...anchorsFromPrevInput])].slice(0, 6);
-  const clueTerms = parseStoryClueTerms(sessionMeta);
-  const activeClue = clueTerms.length ? clueTerms[(Math.max(1, turnIndex) - 1) % clueTerms.length] : "";
-  const prevResult = extractResultSection(sessionMeta?.previousTurn?.narrative || "") || String(sessionMeta?.previousTurn?.narrative || "");
-  const repeatedCluesInPrev = clueTerms.filter((c) => prevResult.includes(c)).slice(0, 4);
 
   const instructionLines = [
     "首句去模板化硬约束：",
     `- 首句禁止复用这些起手句（或其近义改写）：${bannedOpenings.join(" / ")}`,
     `- 首句必须命中本回合动作锚点至少1个：${requiredAnchorTokens.join(" / ")}`,
-    "- 首句优先从“动作/对话/冲突”起手，不要从天气、时间、氛围描写起手。"
+    "- 首句优先从“动作/对话/冲突”起手，不要从天气、时间、氛围描写起手。",
+    "- 人物互动与行为后果优先，不要把固定设定词当作正文主轴反复复述。"
   ];
-  if (mode !== "virtual_character") {
-    instructionLines.push("线索推进软约束：");
-    instructionLines.push(
-      activeClue
-        ? `- 可优先推进线索“${activeClue}”，但不要整段复述线索清单。`
-        : "- 线索只作轻量回指，正文重心放在动作后果与关系变化。"
-    );
-    instructionLines.push(
-      repeatedCluesInPrev.length
-        ? `- 以下线索上回合已提及，尽量避免再次完整复述：${repeatedCluesInPrev.join(" / ")}`
-        : "- 若提及旧线索，建议最多点到1项并给出新变化。"
-    );
-  } else {
-    instructionLines.push("- 角色互动模式优先人物关系推进，线索词不得主导正文。");
-  }
 
   return {
     bannedOpenings,
     requiredAnchorTokens,
-    activeClue,
-    repeatedCluesInPrev,
     instructionText: instructionLines.join("\n")
   };
 }
@@ -1045,11 +1003,6 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
         avoid_templates: openingGuard.bannedOpenings,
         require_action_anchor_tokens: openingGuard.requiredAnchorTokens,
         instruction: "首句必须与本回合用户动作强绑定，不得复用上一回合或固定模板起手句。"
-      },
-      clue_progression: {
-        active_clue: openingGuard.activeClue || "",
-        avoid_full_recap_clues: openingGuard.repeatedCluesInPrev || [],
-        instruction: "线索按回合推进，禁止每回合复述整组线索；若回指旧线索，最多点到1项并给出新变化。"
       }
     },
     turn_index: turnIndex,
@@ -1222,11 +1175,6 @@ export async function runStoryTurnStream({ turnIndex, input, sessionMeta, onNarr
         avoid_templates: openingGuard.bannedOpenings,
         require_action_anchor_tokens: openingGuard.requiredAnchorTokens,
         instruction: "首句必须与本回合用户动作强绑定，不得复用上一回合或固定模板起手句。"
-      },
-      clue_progression: {
-        active_clue: openingGuard.activeClue || "",
-        avoid_full_recap_clues: openingGuard.repeatedCluesInPrev || [],
-        instruction: "线索按回合推进，禁止每回合复述整组线索；若回指旧线索，最多点到1项并给出新变化。"
       }
     },
     turn_index: turnIndex,

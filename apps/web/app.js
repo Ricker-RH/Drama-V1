@@ -395,7 +395,6 @@ const uiState = {
   playIdeaOptions: [],
   playPromptQuestion: "你打算怎么做？",
   playPromptOptions: [],
-  playDynamicClues: "",
   playAutoOpeningRequested: false,
   workshopMode: "long_narrative",
   workshopAuthoringMode: "template",
@@ -2024,12 +2023,8 @@ function getProfileOpeningEntries(profile) {
 function getPlayIdeaPool(world = getSelectedWorld()) {
   const profile = getWorldProfile(world);
   const npcName = String(profile.npc || "").split("（")[0].trim() || "关键角色";
-  const clueParts = String(profile.clues || "")
-    .split("/")
-    .map((x) => x.trim())
-    .filter(Boolean);
   const custom = [
-    `先核验${clueParts[0] || "第一条关键线索"}的真实性`,
+    "先确认对方当前态度与边界",
     `尝试和${npcName}建立最小信任交换`,
     `围绕“${String(profile.mainQuest || "主线目标").slice(0, 14)}”推进一步`,
     `先做低风险试探，再决定是否公开表态`
@@ -2075,7 +2070,6 @@ function buildStoryContext(world = getSelectedWorld()) {
   const profile = getWorldProfile(selected);
   const cardType = inferCardTypeByWorld(selected, profile);
   const mode = modeByCardType(cardType);
-  const effectiveClues = String(uiState.playDynamicClues || profile?.clues || "").trim();
   return {
     card_type: cardType,
     mode,
@@ -2086,7 +2080,6 @@ function buildStoryContext(world = getSelectedWorld()) {
     chapter: profile?.chapter || "",
     mainQuest: profile?.mainQuest || "",
     npc: profile?.npc || "",
-    clues: effectiveClues,
     opening_line: String(selected?.opening_line || selected?.openingLine || profile?.opening_line || profile?.openingLine || profile?.opening?.[0] || "").trim(),
     opening_anchor: String(selected?.opening_anchor || selected?.openingAnchor || profile?.opening_anchor || profile?.openingAnchor || "").trim(),
     hint: profile?.hint || "",
@@ -3308,7 +3301,6 @@ function resetPlayStateForWorld(worldId = uiState.selectedWorldId) {
   uiState.playEntries = getProfileOpeningEntries(profile);
   uiState.playPromptQuestion = "你打算怎么做？";
   uiState.playPromptOptions = [];
-  uiState.playDynamicClues = "";
   uiState.playAutoOpeningRequested = false;
 }
 
@@ -3887,16 +3879,6 @@ async function submitPlayTurn(actionText, options = {}) {
       if (narrativeEntries.length) uiState.playEntries.push(...narrativeEntries);
       showPlaySystemHintBatch(impactHints);
     }
-    if (response?.stateDelta) {
-      const active = Array.isArray(response.stateDelta.cluesActive)
-        ? response.stateDelta.cluesActive.map((x) => String(x || "").trim()).filter(Boolean)
-        : [];
-      if (active.length) {
-        uiState.playDynamicClues = active.join(" / ");
-      } else if (typeof response.stateDelta.clues === "string" && response.stateDelta.clues.trim()) {
-        uiState.playDynamicClues = response.stateDelta.clues.trim();
-      }
-    }
     if (typeof response.round === "number") uiState.playRound = response.round;
     if (autoOpening) uiState.playAutoOpeningRequested = true;
     const providerHint = buildProviderHintMessage(response);
@@ -3922,16 +3904,6 @@ async function submitPlayTurn(actionText, options = {}) {
           .filter((line) => !/^(抛球给用户|抛球给用户)：/.test(String(line)));
         if (narrativeEntries.length) uiState.playEntries.push(...narrativeEntries);
         showPlaySystemHintBatch(impactHints);
-      }
-      if (response?.stateDelta) {
-        const active = Array.isArray(response.stateDelta.cluesActive)
-          ? response.stateDelta.cluesActive.map((x) => String(x || "").trim()).filter(Boolean)
-          : [];
-        if (active.length) {
-          uiState.playDynamicClues = active.join(" / ");
-        } else if (typeof response.stateDelta.clues === "string" && response.stateDelta.clues.trim()) {
-          uiState.playDynamicClues = response.stateDelta.clues.trim();
-        }
       }
       if (typeof response.round === "number") uiState.playRound = response.round;
       showPlaySystemHint("流式不可用，已自动切换普通生成");
@@ -4091,11 +4063,8 @@ function pageDirectMessage() {
 function pagePlayCore() {
   const world = getSelectedWorld();
   const profile = getWorldProfile(world);
-  const storyContext = buildStoryContext(world);
   ensurePlayAutoOpening(world);
   const stage = `${Math.min(4, Math.max(1, Math.floor((uiState.playRound + 1) / 2)))}/4`;
-  const displayClues = String(uiState.playDynamicClues || profile.clues || "动态探索中").trim();
-  const isCharacterMode = storyContext.mode === "virtual_character";
   const modelMenuOpen = uiState.playModelMenuOpen || window.location.hash === "#/play/model";
   const roundLabel = `第${uiState.playRound}幕 · ${uiState.playChapter} · 03:17`;
   return `
@@ -4131,7 +4100,7 @@ function pagePlayCore() {
               <div class="play-status-item"><span>当前任务</span><strong>${escapeHtml(profile.mainQuest)}</strong></div>
               <div class="play-status-item"><span>阶段</span><strong>${stage}</strong></div>
               <div class="play-status-item"><span>NPC</span><strong>${escapeHtml(profile.npc)}</strong></div>
-              <div class="play-status-item"><span>${isCharacterMode ? "关系进展" : "线索"}</span><strong>${escapeHtml(isCharacterMode ? "互动推进中" : displayClues)}</strong></div>
+              <div class="play-status-item"><span>关系进展</span><strong>互动推进中</strong></div>
             </div>
           `
               : ""
@@ -4561,10 +4530,11 @@ async function publishWorkshopCardToApi(cardId) {
   uiState.workshopPublishing = true;
   render();
   try {
+    const { clues, ...publishPayload } = uiState.workshopPublishDraft || {};
     const data = await apiJson(`/creator/cards/${cardId}/publish`, {
       authorId: uiState.currentUserId,
       syncToDynamic: uiState.workshopSyncDynamic,
-      publishPayload: { ...uiState.workshopPublishDraft }
+      publishPayload
     });
     const card = data?.card;
     if (!card?.id) throw new Error("CARD_PUBLISH_FAILED");
@@ -4742,7 +4712,6 @@ function renderWorkshopPublishFlow() {
           <label>章节<input data-field="workshop-publish-chapter" value="${escapeHtml(d.chapter)}" /></label>
           <label>当前任务<input data-field="workshop-publish-mainQuest" value="${escapeHtml(d.mainQuest)}" /></label>
           <label>关键 NPC<input data-field="workshop-publish-npc" value="${escapeHtml(d.npc)}" /></label>
-          <label>线索<input data-field="workshop-publish-clues" value="${escapeHtml(d.clues)}" /></label>
           <label>体裁<input data-field="workshop-publish-format" value="${escapeHtml(d.format)}" /></label>
           <label>主题<input data-field="workshop-publish-theme" value="${escapeHtml(d.theme)}" /></label>
           <label>设定<input data-field="workshop-publish-setting" value="${escapeHtml(d.setting)}" /></label>

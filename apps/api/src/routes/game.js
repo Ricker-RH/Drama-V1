@@ -162,53 +162,6 @@ function getSessionMeta({ session, requestMode, body, latestTurn }) {
   };
 }
 
-function splitClueTerms(raw) {
-  return String(raw || "")
-    .split(/[，。；、,/\-|：:\s\[\]（）()·]+/)
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .filter((x) => x.length >= 2 && x.length <= 16)
-    .slice(0, 12);
-}
-
-function pickChoiceClueHints(jsonBlock = {}) {
-  const nextChoices = Array.isArray(jsonBlock?.director?.next_choices)
-    ? jsonBlock.director.next_choices
-    : [];
-  const bag = nextChoices
-    .map((c) => `${String(c?.label || "").trim()} ${String(c?.prompt_hint || "").trim()}`)
-    .join(" ");
-  return splitClueTerms(bag).slice(0, 4);
-}
-
-function buildTurnClueState({ sessionMeta, llmResult, turnIndex }) {
-  const mode = normalizeMode(sessionMeta?.mode || sessionMeta?.storyContext?.mode || "");
-  const staticClues = splitClueTerms(sessionMeta?.storyContext?.clues || "");
-  const prevActive = Array.isArray(sessionMeta?.previousTurn?.stateDelta?.cluesActive)
-    ? sessionMeta.previousTurn.stateDelta.cluesActive.map((x) => String(x || "").trim()).filter(Boolean)
-    : [];
-  const choiceHints = pickChoiceClueHints(llmResult?.jsonBlock || {});
-
-  // In character-interaction mode, avoid clue-led repetition; use only emergent hints.
-  const active = [...choiceHints.slice(0, 3)];
-  if (mode !== "virtual_character" && staticClues.length && active.length < 2) {
-    const idx = (Math.max(1, Number(turnIndex || 1)) - 1) % staticClues.length;
-    active.push(staticClues[idx]);
-    if (staticClues.length > 2) {
-      const second = staticClues[(idx + 1) % staticClues.length];
-      if (!active.includes(second)) active.push(second);
-    }
-  }
-
-  const uniqActive = [...new Set(active)].slice(0, 3);
-
-  const compact = uniqActive.filter((x) => !prevActive.includes(x) || uniqActive.length <= 1).slice(0, 3);
-  return {
-    cluesActive: compact.length ? compact : uniqActive,
-    cluesSource: "dynamic_turn_rotation"
-  };
-}
-
 async function persistTurnAndBuildResponse({
   inMemory,
   body,
@@ -218,12 +171,7 @@ async function persistTurnAndBuildResponse({
   rewriteMeta = null
 }) {
   const actionResult = llmResult.narrativeBlock;
-  const rawStateDelta = llmResult.jsonBlock?.state_delta || {};
-  const dynamicClueState = buildTurnClueState({ sessionMeta, llmResult, turnIndex });
-  const stateDelta = {
-    ...rawStateDelta,
-    ...dynamicClueState
-  };
+  const stateDelta = llmResult.jsonBlock?.state_delta || {};
   const promptQuestion = llmResult?.jsonBlock?.prompt_question || "";
   const promptOptions = Array.isArray(llmResult?.jsonBlock?.prompt_options)
     ? llmResult.jsonBlock.prompt_options

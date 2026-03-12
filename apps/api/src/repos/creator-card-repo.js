@@ -52,14 +52,7 @@ function buildWorldCardPayload(card, publishPayload = {}) {
     || content.npc
     || "关键角色（待接触）"
   ).trim();
-  const keyClues = String(
-    publishPayload.clues
-    || content.cluePool
-    || content.memoryHooks
-    || content.detailMemorySeed
-    || content.clues
-    || "初始线索 / 关系变化 / 环境异动"
-  ).trim();
+  const keyClues = String(publishPayload.clues || "").trim();
   const openingSummary = extractIntroText(publishPayload)
     || String(content.openingLine || content.openingAnchor || content.worldSetting || "").trim();
   const playHook = String(publishPayload.playHook || mainQuest).trim();
