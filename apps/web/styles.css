@@ -11,6 +11,9 @@
   --dark-line: #24324b;
   --dark-text: #dbe8ff;
   --primary-grad: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+  --tab-text: #6b7280;
+  --tab-active: #5b43c4;
+  --tab-active-bg: rgba(91, 67, 196, 0.12);
   --font-family-app: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --fs-normal: 14px;
   --fs-medium: 18px;
@@ -11148,6 +11151,85 @@ button {
 .dm-back-btn,
 .world-hero-back {
   font-size: var(--fs-medium) !important;
+}
+
+/* Global Tab Color Unification */
+:is(
+  .home-main-tab,
+  .home-subtab,
+  .xh-side-tab,
+  .search-result-tabs button,
+  .search-result-subtabs button,
+  .msg-tabs button,
+  .me-tab-row button,
+  .me-coins-tabs button,
+  .dynamic-tabs button,
+  .community-top-switch button,
+  .community-tab-switch button,
+  .community-group-tabs button,
+  .drama-dual-tab button,
+  .drama-mini-tabs button,
+  .drama-rank-tabs button,
+  .user-tabs button,
+  .auth-switch button,
+  .login-switch button,
+  .workshop-mode-tabs button,
+  .workshop-input-tabs button,
+  .xh-mobile-tab,
+  .xh-mobile-bottom-item,
+  .xh-mobile-topic-tab
+) {
+  color: var(--tab-text) !important;
+}
+
+:is(
+  .home-main-tab.active,
+  .home-subtab.active,
+  .xh-side-tab.active,
+  .search-result-tabs button.active,
+  .search-result-subtabs button.active,
+  .msg-tabs button.active,
+  .me-tab-row button.active,
+  .me-coins-tabs button.active,
+  .dynamic-tabs button.active,
+  .community-top-switch button.active,
+  .community-tab-switch button.active,
+  .community-group-tabs button.active,
+  .drama-dual-tab button.active,
+  .drama-mini-tabs button.active,
+  .drama-rank-tabs button.active,
+  .user-tabs button.active,
+  .auth-switch button.active,
+  .login-switch button.active,
+  .workshop-mode-tabs button.active,
+  .workshop-input-tabs button.active,
+  .xh-mobile-tab.active,
+  .xh-mobile-bottom-item.active,
+  .xh-mobile-topic-tab.active
+) {
+  color: var(--tab-active) !important;
+}
+
+:is(
+  .home-main-tab.active,
+  .home-subtab.active,
+  .search-result-tabs button.active,
+  .search-result-subtabs button.active,
+  .msg-tabs button.active,
+  .me-tab-row button.active,
+  .me-coins-tabs button.active,
+  .dynamic-tabs button.active,
+  .community-tab-switch button.active,
+  .drama-dual-tab button.active,
+  .drama-mini-tabs button.active,
+  .drama-rank-tabs button.active,
+  .user-tabs button.active,
+  .auth-switch button.active,
+  .login-switch button.active,
+  .workshop-mode-tabs button.active,
+  .workshop-input-tabs button.active
+) {
+  background: var(--tab-active-bg) !important;
 }
 
 @media (max-width: 1180px) {

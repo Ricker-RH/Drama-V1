@@ -4956,7 +4956,7 @@ function renderCommunityHero(activeTab = "home") {
       <div class="backstage-profile-row">
         <button class="backstage-avatar community-hero-icon" data-go="#/community/home">社</button>
         <div class="backstage-profile-meta">
-          <h2>社区广场</h2>
+          <h2>社区</h2>
           <p>找同好、聊剧情、组局共创</p>
           <small>实时更新高活跃社群与热门讨论</small>
         </div>
