@@ -1651,7 +1651,9 @@ function renderExploreLoginModal(options = {}) {
   if (standalone) {
     return `
       <div class="login-page-shell">
-        <div class="login-page-bg"></div>
+        <div class="login-page-bg" aria-hidden="true">
+          <img src="/assets/login-bg-vertical.webp" alt="" loading="eager" fetchpriority="high" decoding="sync" />
+        </div>
         <section class="login-page-card">
           <div class="login-page-brand">
             <img src="/assets/logo-v3.png" alt="爪马 Logo" loading="eager" fetchpriority="high" />

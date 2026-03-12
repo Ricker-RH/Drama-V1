@@ -9189,12 +9189,22 @@ body.message-thread-route .layout.explore-mode .content {
 .login-page-bg {
   position: absolute;
   inset: 0;
-  background-image:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.28) 0%, rgba(15, 23, 42, 0.2) 45%, rgba(15, 23, 42, 0.28) 100%),
-    url("/assets/login-bg-vertical.png");
-  background-size: cover;
-  background-position: center center;
-  background-repeat: no-repeat;
+  background: radial-gradient(80% 65% at 50% 35%, #cad5ff 0%, #a8b8f5 52%, #93a3e0 100%);
+}
+
+.login-page-bg img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.login-page-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.28) 0%, rgba(15, 23, 42, 0.2) 45%, rgba(15, 23, 42, 0.28) 100%);
 }
 
 body.auth-route .web-root {
