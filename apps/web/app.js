@@ -376,6 +376,7 @@ const uiState = {
   messageThreadToolsOpen: false,
   messageThreadMenuOpen: false,
   messageThreadAutoScrollOnEnter: false,
+  messageThreadForceBottomUntil: 0,
   messageFeedback: "",
   messageFollowActions: {},
   messageCommentLikes: {},
@@ -3869,6 +3870,7 @@ async function startOrReuseDirectConversation(targetUserId, targetName = "对方
     uiState.messageReadAckConversationId = "";
     uiState.messagePresenceBeatAt[conversationId] = 0;
     uiState.messageThreadAutoScrollOnEnter = true;
+    uiState.messageThreadForceBottomUntil = Date.now() + 1800;
     markMessageRead(conversationId);
   }
   uiState.messageFeedback = "";
@@ -8380,7 +8382,10 @@ function render() {
   ensureCarouselTimer();
   ensureDramaHeroTimer();
   ensureMessageRealtimeSync();
-  if (current.startsWith("#/messages/thread") && uiState.messageThreadAutoScrollOnEnter) {
+  if (
+    current.startsWith("#/messages/thread")
+    && (uiState.messageThreadAutoScrollOnEnter || Date.now() < Number(uiState.messageThreadForceBottomUntil || 0))
+  ) {
     scrollThreadToBottom();
     uiState.messageThreadAutoScrollOnEnter = false;
   }
@@ -8487,13 +8492,18 @@ function ensureDramaHeroTimer() {
 let messageRealtimeTimer;
 let messageRealtimeSyncing = false;
 let messageRealtimeSyncRunner = null;
-function scrollThreadToBottom() {
+function scrollThreadToBottom(retry = 0) {
   requestAnimationFrame(() => {
     const wrap = document.querySelector(".dm-modern-messages");
     if (!(wrap instanceof HTMLElement)) return;
+    const lastBubble = wrap.querySelector(".dm-modern-row:last-child, .dm-time-sep:last-child");
+    if (lastBubble instanceof HTMLElement) {
+      lastBubble.scrollIntoView({ block: "end", inline: "nearest" });
+    }
     wrap.scrollTop = wrap.scrollHeight;
     setTimeout(() => {
       wrap.scrollTop = wrap.scrollHeight;
+      if (retry < 4) scrollThreadToBottom(retry + 1);
     }, 40);
   });
 }
@@ -8988,6 +8998,7 @@ document.addEventListener("click", (event) => {
         uiState.messageReadAckConversationId = "";
         uiState.messagePresenceBeatAt[id] = 0;
         uiState.messageThreadAutoScrollOnEnter = true;
+        uiState.messageThreadForceBottomUntil = Date.now() + 1800;
         markMessageRead(id);
         moveMessageToTop(id);
       }
@@ -11404,6 +11415,7 @@ window.addEventListener("hashchange", () => {
   render();
   const hash = window.location.hash || "";
   if (hash.startsWith("#/messages/thread")) {
+    uiState.messageThreadForceBottomUntil = Date.now() + 1800;
     scrollThreadToBottom();
     return;
   }
