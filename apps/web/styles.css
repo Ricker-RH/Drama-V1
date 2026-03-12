@@ -13,7 +13,7 @@
   --primary-grad: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
   --tab-text: #6b7280;
   --tab-active: #5b43c4;
-  --tab-active-bg: rgba(91, 67, 196, 0.12);
+  --tab-active-bg: transparent;
   --font-family-app: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --fs-normal: 14px;
   --fs-medium: 18px;
@@ -11390,23 +11390,27 @@ button {
 :is(
   .home-main-tab.active,
   .home-subtab.active,
+  .xh-side-tab.active,
   .search-result-tabs button.active,
   .search-result-subtabs button.active,
   .msg-tabs button.active,
   .me-tab-row button.active,
   .me-coins-tabs button.active,
   .dynamic-tabs button.active,
+  .community-top-switch button.active,
   .community-tab-switch button.active,
   .drama-dual-tab button.active,
   .drama-mini-tabs button.active,
   .drama-rank-tabs button.active,
+  .community-group-tabs button.active,
   .user-tabs button.active,
   .auth-switch button.active,
   .login-switch button.active,
   .workshop-mode-tabs button.active,
   .workshop-input-tabs button.active
 ) {
-  background: var(--tab-active-bg) !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 @media (max-width: 1180px) {
