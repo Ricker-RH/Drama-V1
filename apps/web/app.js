@@ -3959,11 +3959,17 @@ function shouldHeartbeatPresence(conversationId) {
 }
 
 async function syncActiveConversationThread() {
-  if (!uiState.isLoggedIn || !uiState.currentUserId) return false;
+  if (!uiState.isLoggedIn || !uiState.currentUserId) {
+    return { messageChanged: false, peerChanged: false };
+  }
   const currentHash = window.location.hash || "";
-  if (!currentHash.startsWith("#/messages/thread")) return false;
+  if (!currentHash.startsWith("#/messages/thread")) {
+    return { messageChanged: false, peerChanged: false };
+  }
   const activeId = getActiveConversationId();
-  if (!activeId || !isUuid(activeId)) return false;
+  if (!activeId || !isUuid(activeId)) {
+    return { messageChanged: false, peerChanged: false };
+  }
   const payload = await fetchThreadMessages(activeId, uiState.currentUserId, 120);
   const prevPeer = uiState.messagePeerPresence[activeId] || null;
   const rows = payload.messages || [];
@@ -3973,14 +3979,14 @@ async function syncActiveConversationThread() {
   const peerChanged = peerPresenceChanged(prevPeer, uiState.messagePeerPresence[activeId] || null);
   const next = toThreadViewMessages(rows, uiState.currentUserId);
   const prev = ensureMessageThread(activeId);
-  if (!threadViewChanged(prev, next)) return peerChanged;
+  if (!threadViewChanged(prev, next)) return { messageChanged: false, peerChanged };
   uiState.messageThreads[activeId] = next;
   const latest = next[next.length - 1];
   if (latest?.text) {
     updateMessageInboxPreview(activeId, latest.text);
     if (latest.from === "me") markMessageRead(activeId);
   }
-  return true;
+  return { messageChanged: true, peerChanged };
 }
 
 function showMessageFeedback(text) {
@@ -8811,6 +8817,30 @@ let messageRealtimeSyncRunner = null;
 let messageRealtimeEventSource = null;
 let messageRealtimeConnectedUserId = "";
 let messageRealtimeReconnectTimer = null;
+let messageRealtimePendingRenderWhileTyping = false;
+let messageRealtimePendingScrollWhileTyping = false;
+
+function isMessageThreadDraftFocused() {
+  if (!(window.location.hash || "").startsWith("#/messages/thread")) return false;
+  const active = document.activeElement;
+  if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) return false;
+  return active.getAttribute("data-field") === "message-thread-draft";
+}
+
+function triggerMessageRealtimeRender(options = {}) {
+  const { scrollToBottom = false } = options;
+  if (isMessageThreadDraftFocused()) {
+    messageRealtimePendingRenderWhileTyping = true;
+    if (scrollToBottom) messageRealtimePendingScrollWhileTyping = true;
+    return;
+  }
+  messageRealtimePendingRenderWhileTyping = false;
+  render();
+  if (scrollToBottom || messageRealtimePendingScrollWhileTyping) {
+    scrollThreadToBottom();
+    messageRealtimePendingScrollWhileTyping = false;
+  }
+}
 
 function getMessageRealtimePollIntervalMs() {
   const route = getCurrentRoutePath();
@@ -8853,6 +8883,8 @@ function ensureMessageRealtimeSync() {
     }
     messageRealtimeConnectedUserId = "";
     messageRealtimeSyncRunner = null;
+    messageRealtimePendingRenderWhileTyping = false;
+    messageRealtimePendingScrollWhileTyping = false;
     return;
   }
   const closeStream = () => {
@@ -8879,27 +8911,31 @@ function ensureMessageRealtimeSync() {
     const liveOnThreadPage = liveHash.startsWith("#/messages/thread");
     void syncMessageInbox()
       .then((inboxChanged) => {
-        if (!liveOnThreadPage) return { inboxChanged, threadChanged: false };
-        return syncActiveConversationThread().then((threadChanged) => ({ inboxChanged, threadChanged }));
+        if (!liveOnThreadPage) {
+          return {
+            inboxChanged,
+            threadState: { messageChanged: false, peerChanged: false }
+          };
+        }
+        return syncActiveConversationThread().then((threadState) => ({ inboxChanged, threadState }));
       })
-      .then(({ inboxChanged = false, threadChanged = false } = {}) => {
+      .then(({ inboxChanged = false, threadState } = {}) => {
+        const threadMessageChanged = Boolean(threadState?.messageChanged);
+        const threadPeerChanged = Boolean(threadState?.peerChanged);
         const activeId = getActiveConversationId();
         if (liveOnThreadPage && activeId && shouldHeartbeatPresence(activeId)) {
           void markConversationReadOnServer(activeId)
             .then(() => {
               uiState.messageReadAckConversationId = activeId;
               markMessageRead(activeId);
-              render();
+              triggerMessageRealtimeRender();
             })
             .catch(() => {
               uiState.messagePresenceBeatAt[activeId] = 0;
             });
         }
-        if (inboxChanged || threadChanged) {
-          render();
-          if (threadChanged) {
-            scrollThreadToBottom();
-          }
+        if (inboxChanged || threadMessageChanged || threadPeerChanged) {
+          triggerMessageRealtimeRender({ scrollToBottom: liveOnThreadPage && threadMessageChanged });
         }
       })
       .catch(() => {})
@@ -8943,15 +8979,14 @@ function ensureMessageRealtimeSync() {
         .then(() => {
           uiState.messageReadAckConversationId = conversationId;
           markMessageRead(conversationId);
-          render();
+          triggerMessageRealtimeRender();
         })
         .catch(() => {
           uiState.messagePresenceBeatAt[conversationId] = 0;
         });
     }
     if (inserted || !fromMe || isActiveThread) {
-      render();
-      if (isActiveThread) scrollThreadToBottom();
+      triggerMessageRealtimeRender({ scrollToBottom: isActiveThread && inserted });
     }
   };
   const onRealtimeRead = (payload) => {
@@ -8962,7 +8997,7 @@ function ensureMessageRealtimeSync() {
     const lastReadAt = String(receipt.lastReadAt || "").trim();
     if (readerId === String(uiState.currentUserId || "")) {
       markMessageRead(conversationId);
-      render();
+      triggerMessageRealtimeRender();
       return;
     }
     const prevPeer = uiState.messagePeerPresence[conversationId] || {};
@@ -8972,7 +9007,7 @@ function ensureMessageRealtimeSync() {
       online: true
     };
     const changed = applyPeerReadReceipt(conversationId, lastReadAt);
-    if (changed) render();
+    if (changed) triggerMessageRealtimeRender();
   };
 
   runSync();
@@ -11967,7 +12002,10 @@ document.addEventListener("focusout", () => {
   setTimeout(() => {
     const active = document.activeElement;
     const stillEditing = active instanceof HTMLInputElement && active.getAttribute("data-field") === "message-thread-draft";
-    if (!stillEditing) document.body.classList.remove("message-thread-input-focus");
+    if (!stillEditing) {
+      document.body.classList.remove("message-thread-input-focus");
+      if (messageRealtimePendingRenderWhileTyping) triggerMessageRealtimeRender();
+    }
     syncMobileViewportForThread();
   }, 120);
 });
