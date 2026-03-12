@@ -604,6 +604,10 @@ body.world-detail-route .layout.explore-mode .content {
   padding-top: 0;
 }
 
+body.world-detail-route .web-root {
+  padding-top: 0;
+}
+
 .xh-shell {
   display: grid;
   grid-template-columns: 260px 1fr;
