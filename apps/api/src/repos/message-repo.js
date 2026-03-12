@@ -1,5 +1,12 @@
 import { query } from "../db/client.js";
 
+function normalizeMessageType(messageType = "text") {
+  const raw = String(messageType || "").trim().toLowerCase();
+  if (raw === "story_card") return "card";
+  if (["text", "image", "video", "card", "system"].includes(raw)) return raw;
+  return "text";
+}
+
 async function assertConversationMember(conversationId, userId) {
   const res = await query(
     `select 1
@@ -24,6 +31,7 @@ export async function sendConversationMessage({
   clientMessageId = null
 }) {
   await assertConversationMember(conversationId, senderId);
+  const safeMessageType = normalizeMessageType(messageType);
 
   const inserted = await query(
     `insert into messages(
@@ -32,7 +40,7 @@ export async function sendConversationMessage({
        $1, $2, $3, $4, $5::jsonb, 'sent', $6
      )
      returning id, conversation_id, sender_id, message_type, content, payload, created_at`,
-    [conversationId, senderId, messageType, content, JSON.stringify(payload || {}), clientMessageId]
+    [conversationId, senderId, safeMessageType, content, JSON.stringify(payload || {}), clientMessageId]
   );
   const message = inserted.rows[0] || null;
   if (!message) return null;

@@ -5210,7 +5210,8 @@ function normalizeStoryCardPayload(payload = {}) {
 
 function renderThreadMessageBubble(message) {
   const type = String(message?.type || "text");
-  if (type !== "story_card") {
+  const cardLike = type === "story_card" || type === "card";
+  if (!cardLike) {
     return `<div class="dm-modern-bubble">${escapeHtml(String(message?.text || ""))}</div>`;
   }
   const card = normalizeStoryCardPayload(message?.payload || {});
@@ -5999,7 +6000,10 @@ async function generateWorkshopPaintWithApi({
     negative,
     count
   });
-  return Array.isArray(data?.images) ? data.images : [];
+  return {
+    images: Array.isArray(data?.images) ? data.images : [],
+    warnings: Array.isArray(data?.warnings) ? data.warnings : []
+  };
 }
 
 function buildCreatorWorks() {
@@ -9275,10 +9279,10 @@ document.addEventListener("click", (event) => {
         negative: uiState.workshopPaintNegativePrompt,
         count: 4
       })
-        .then((images) => {
+        .then(({ images, warnings }) => {
           uiState.workshopPaintResults = images;
           uiState.workshopPaintFeedback = images.length
-            ? `已生成 ${images.length} 张预览图，你可以继续修改提示词再试。`
+            ? `已生成 ${images.length} 张预览图${Array.isArray(warnings) && warnings.length ? `（${warnings.length} 张失败）` : ""}，你可以继续修改提示词再试。`
             : "未返回图片，请调整提示词后重试。";
           uiState.workshopPaintGenerating = false;
           render();
@@ -10176,7 +10180,7 @@ document.addEventListener("click", (event) => {
         .then((conversationId) => {
           if (!conversationId) return;
           return sendMessageToThread(conversationId, payload, {
-            messageType: "story_card",
+            messageType: "card",
             payload: cardPayload
           }).then(() => conversationId);
         })
