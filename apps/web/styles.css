@@ -9527,7 +9527,7 @@ code {
 
   .me-hero {
     margin: -18px -20px 0;
-    min-height: 336px;
+    min-height: auto;
     padding: 18px 16px 14px;
   }
 
