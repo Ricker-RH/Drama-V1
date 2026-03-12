@@ -9195,6 +9195,10 @@ body.message-thread-route .layout.explore-mode .content {
     linear-gradient(180deg, #eef2ff 0%, #e5e7eb 52%, #f3f4f6 100%);
 }
 
+body.auth-route .web-root {
+  padding: 0;
+}
+
 .login-page-card {
   position: relative;
   z-index: 1;
@@ -13619,19 +13623,12 @@ button {
 }
 
 @media (max-width: 900px) {
-  .login-page-shell {
+  body.auth-route .web-root {
     padding: 0;
-    width: 100vw;
-    min-height: 100dvh;
   }
 
-  .login-page-card {
-    width: 100vw;
-    min-height: 100dvh;
-    border-radius: 0;
-    border: none;
-    box-shadow: none;
-    padding: calc(env(safe-area-inset-top) + 14px) 14px calc(env(safe-area-inset-bottom) + 12px);
+  .login-page-shell {
+    padding: calc(env(safe-area-inset-top) + 12px) 12px calc(env(safe-area-inset-bottom) + 12px);
   }
 
   :root {

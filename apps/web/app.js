@@ -8597,6 +8597,7 @@ function render() {
   document.body.classList.toggle("play-route", current.startsWith("#/play"));
   document.body.classList.toggle("message-thread-route", current.startsWith("#/messages/thread"));
   document.body.classList.toggle("world-detail-route", current === "#/world/detail");
+  document.body.classList.toggle("auth-route", current.startsWith("#/auth"));
   const renderer = renderers[current] || pageLogin;
   app.innerHTML = renderer();
   syncWorldRoleScroll();
