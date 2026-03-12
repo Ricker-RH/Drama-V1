@@ -81,7 +81,15 @@ function getMemoryLatestTurn(sessionId) {
 function toUserFacingTurnError(llmResult) {
   const reason = String(llmResult?.providerReason || "llm turn generation failed");
   if (/quality_gate_failed/i.test(reason)) {
-    return "文本质量门禁未通过（检测到重复或回档），已自动重试后仍失败，请换一种更具体的行动描述再试";
+    const qualityKeys = extractQualityFailureKeys(reason);
+    if (
+      qualityKeys.includes("scene_reset_risk")
+      || qualityKeys.includes("high_repeat_with_previous_turn")
+      || qualityKeys.includes("compound_quality_failure")
+    ) {
+      return "文本质量门禁未通过（检测到重复或回档），已自动重试后仍失败，请换一种更具体的行动描述再试";
+    }
+    return "文本质量门禁未通过（自动重试后仍失败），请重试或换一种更明确的行动描述";
   }
   if (/fetch failed|networkerror|network request failed/i.test(reason)) {
     return "上游模型网络波动（已自动重试后仍失败），请稍后重试";
@@ -101,6 +109,32 @@ function toUserFacingTurnError(llmResult) {
     return "模型服务暂时不可用，请稍后重试";
   }
   return reason;
+}
+
+function extractQualityFailureKeys(reason) {
+  const raw = String(reason || "");
+  if (!/quality_gate_failed:/i.test(raw)) return [];
+  const segment = raw.split(/quality_gate_failed:/i)[1] || "";
+  return segment
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function isRepeatRollbackQualityFailure(llmResult) {
+  const reasonKeys = extractQualityFailureKeys(llmResult?.providerReason || "");
+  const issueKeys = Array.isArray(llmResult?.qualityIssues) ? llmResult.qualityIssues : [];
+  const hardKeys = Array.isArray(llmResult?.qualityHardFailures) ? llmResult.qualityHardFailures : [];
+  const keySet = new Set(
+    [...reasonKeys, ...issueKeys, ...hardKeys]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean)
+  );
+  return (
+    keySet.has("scene_reset_risk")
+    || keySet.has("high_repeat_with_previous_turn")
+    || keySet.has("compound_quality_failure")
+  );
 }
 
 function sseWrite(res, event, payload) {
@@ -267,17 +301,22 @@ export async function handleGame(req, res, pathname) {
       const streamedNarrative = String(llmResult?.narrativeBlock || "").trim();
       const reason = String(llmResult?.providerReason || "");
       const qualityFailed = /quality_gate_failed/i.test(reason);
-      if (streamedNarrative && !qualityFailed) {
+      const hardRepeatRollback = qualityFailed && isRepeatRollbackQualityFailure(llmResult);
+      if (streamedNarrative && (!qualityFailed || !hardRepeatRollback)) {
         sseWrite(res, "notice", {
           type: "stream_partial_commit",
-          message: "已使用流式正文完成本回合，结构化字段将下回合继续校正"
+          message: qualityFailed
+            ? "已使用流式正文完成本回合（已忽略非阻断质量告警），结构化字段将下回合继续校正"
+            : "已使用流式正文完成本回合，结构化字段将下回合继续校正"
         });
         llmResult = {
           failed: false,
           jsonBlock: llmResult.jsonBlock || {},
           narrativeBlock: streamedNarrative,
           provider: llmResult.provider || "openai",
-          providerReason: `stream_partial:${String(llmResult.providerReason || "").slice(0, 120)}`
+          providerReason: qualityFailed
+            ? `stream_partial_quality_bypass:${String(llmResult.providerReason || "").slice(0, 120)}`
+            : `stream_partial:${String(llmResult.providerReason || "").slice(0, 120)}`
         };
       } else {
         sseWrite(res, "notice", {

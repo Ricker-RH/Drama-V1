@@ -688,77 +688,31 @@ function evaluateNarrativeQuality({ narrativeText, turnIndex, input, sessionMeta
   let sceneReset = false;
   if (turnIndex > 1 && prevResult) {
     const sim = jaccardSimilarity(prevResult, nowResult);
-    if (sim >= 0.84) {
+    const prevLen = Math.max(1, countVisibleChars(prevResult));
+    const nowLen = Math.max(1, countVisibleChars(nowResult));
+    const lenRatio = nowLen / prevLen;
+    const lenComparable = lenRatio >= 0.72 && lenRatio <= 1.38;
+    if (sim >= 0.9 && lenComparable) {
       highRepeat = true;
       issues.push("high_repeat_with_previous_turn");
     }
-    const prevHead = prevResult.slice(0, 80);
-    const nowHead = nowResult.slice(0, 80);
-    if (prevHead && nowHead && jaccardSimilarity(prevHead, nowHead) >= 0.9) {
+    const prevHead = prevResult.slice(0, 120);
+    const nowHead = nowResult.slice(0, 120);
+    if (
+      prevHead
+      && nowHead
+      && lenComparable
+      && jaccardSimilarity(prevHead, nowHead) >= 0.95
+      && sim >= 0.82
+    ) {
       sceneReset = true;
       issues.push("scene_reset_risk");
     }
   }
 
-  // Hard fail only on clear rollback OR multiple quality failures combined.
+  // Hard fail should focus on true regressions (rollback/repetition) rather than style variance.
   const hardFailures = [];
   if (sceneReset) hardFailures.push("scene_reset_risk");
-  if (anchorMiss) hardFailures.push("context_anchor_miss");
-  if (turnIndex <= 2 && paraAnchorRatio < 0.45) hardFailures.push("paragraph_anchor_sparse");
-  if (mode === "virtual_character" && (dialogueMissing || reportToneHeavy)) {
-    hardFailures.push("character_immersion_failure");
-  }
-  if (enumeratedList) {
-    hardFailures.push("enumerated_list_style");
-  }
-  if (agencyHijack) {
-    hardFailures.push("user_agency_hijack");
-  }
-  if (tooShort) {
-    hardFailures.push("content_too_short");
-  }
-  if (specificitySparse) {
-    hardFailures.push("specificity_sparse");
-  }
-  if (genericEnding) {
-    hardFailures.push("generic_ending");
-  }
-  if (sectionLabelLeak) {
-    hardFailures.push("section_label_leak");
-  }
-  if (promptHookLeak) {
-    hardFailures.push("prompt_hook_leak");
-  }
-  if (mode === "virtual_character" && jargonHeavy) {
-    hardFailures.push("abstract_jargon_heavy");
-  }
-  if (mode === "virtual_character" && rolecardTemplateCadence) {
-    hardFailures.push("rolecard_template_cadence");
-  }
-  if (mode === "virtual_character" && dialogueQuoteCount(nowResult) < 2) {
-    hardFailures.push("dialogue_density_low");
-  }
-  if (mode === "virtual_character" && actionBeatScore(nowResult) < 2) {
-    hardFailures.push("action_beats_low");
-  }
-  if (mode === "virtual_character" && emotionShiftScore(nowResult) < 1) {
-    hardFailures.push("emotion_shift_missing");
-  }
-  if (mode !== "virtual_character" && turnIndex <= 3 && dialogueMissing && sensorySparse) {
-    hardFailures.push("narrative_immersion_failure");
-  }
-  if (turnIndex >= 1 && (signatureDialogueMissing || microReactionMissing)) {
-    hardFailures.push("immersion_core_missing");
-  }
-  if (turnIndex > 1 && callbackMissing) {
-    hardFailures.push("callback_missing");
-  }
-  if (reportToneHeavy) {
-    hardFailures.push("report_tone_heavy");
-  }
-  if (mode !== "virtual_character" && sensorySparse) {
-    hardFailures.push("sensory_sparse");
-  }
   if ((highRepeat && internalDup) || (highRepeat && actionMiss) || (internalDup && actionMiss)) {
     hardFailures.push("compound_quality_failure");
   }
@@ -804,6 +758,8 @@ function parseModelOutput(content, turnIndex, input, sessionMeta) {
         providerReason: "quality_gate_failed:choices_not_grounded",
         jsonBlock,
         narrativeBlock,
+        qualityIssues: qualityEval.issues || [],
+        qualityHardFailures: qualityEval.hardFailures || [],
         qualityAnchors: qualityEval.anchors || [],
         detailMemory: qualityEval.detailMemory || []
       };
@@ -816,6 +772,8 @@ function parseModelOutput(content, turnIndex, input, sessionMeta) {
         providerReason: `quality_gate_failed:${qualityEval.issues.join(",")}`,
         jsonBlock,
         narrativeBlock,
+        qualityIssues: qualityEval.issues || [],
+        qualityHardFailures: qualityEval.hardFailures || [],
         qualityAnchors: qualityEval.anchors || [],
         detailMemory: qualityEval.detailMemory || []
       };
