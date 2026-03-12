@@ -8512,7 +8512,7 @@ code {
     border: none;
     background: transparent;
     color: #7c7aa2;
-    font-size: 44px;
+    font-size: 18px !important;
     font-weight: 800;
     padding: 0 0 6px;
     white-space: nowrap;
@@ -8652,7 +8652,7 @@ code {
     border: none;
     background: transparent;
     color: #6b7280;
-    font-size: 19px;
+    font-size: 17px !important;
     font-weight: 800;
     line-height: 1;
     height: 42px;
