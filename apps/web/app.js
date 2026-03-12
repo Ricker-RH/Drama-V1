@@ -709,7 +709,7 @@ function pageLogin() {
       <div class="auth-wrap">
         <div class="auth-card">
           <div class="auth-brand auth-brand-center">
-            <div class="auth-logo"><img src="/assets/logo-cutout-512.png" alt="爪马 Logo" /></div>
+            <div class="auth-logo"><img src="/assets/logo-v3.png" alt="爪马 Logo" /></div>
             <h2>Drama</h2>
             <p>请选择登录方式</p>
           </div>
@@ -1076,7 +1076,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
 
     <section class="xh-shell ${isMessageFullRoute ? "xh-shell-message" : ""} ${showMobileTopBar ? "mobile-top-visible" : ""} ${isTopNavLinkedRoute ? "top-nav-linked" : ""}">
       <aside class="xh-left">
-        <div class="xh-logo"><img src="/assets/logo-cutout-512.png" alt="爪马 Logo" /></div>
+        <div class="xh-logo"><img src="/assets/logo-v3.png" alt="爪马 Logo" /></div>
         <div class="xh-left-nav">
           ${sideTabs
             .map(
@@ -1363,7 +1363,7 @@ function renderExploreLoginModal() {
         <button class="login-modal-close" data-action="close-login-modal">×</button>
         <div class="login-modal-left">
           <div class="login-bubble">登录后推荐更懂你的内容</div>
-          <div class="login-mini-brand"><img src="/assets/logo-cutout-512.png" alt="爪马 Logo" /><span>爪马 Drama</span></div>
+          <div class="login-mini-brand"><img src="/assets/logo-v3.png" alt="爪马 Logo" /><span>爪马 Drama</span></div>
           <div class="login-qr-box">扫码区</div>
           <p>可用 Drama 或 微信扫码</p>
           <small>▶ 如何扫码登录</small>
