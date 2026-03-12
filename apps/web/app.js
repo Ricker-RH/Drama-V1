@@ -8444,10 +8444,7 @@ function render() {
   ensureCarouselTimer();
   ensureDramaHeroTimer();
   ensureMessageRealtimeSync();
-  if (
-    current.startsWith("#/messages/thread")
-    && (uiState.messageThreadAutoScrollOnEnter || Date.now() < Number(uiState.messageThreadForceBottomUntil || 0))
-  ) {
+  if (current.startsWith("#/messages/thread")) {
     scrollThreadToBottom();
     uiState.messageThreadAutoScrollOnEnter = false;
   }
