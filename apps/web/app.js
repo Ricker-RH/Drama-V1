@@ -67,6 +67,7 @@ const PLAY_IDEA_SUGGESTIONS = [
   "用假情报测试陌生观察者反应"
 ];
 const TEST_WORLD_PROFILES = {};
+const WORLD_COMMENTS_CACHE_PREFIX = "drama_world_comments_v1_";
 const PLAY_INITIAL_ENTRIES = [
   {
     type: "narrator",
@@ -508,10 +509,23 @@ const uiState = {
     cover: "",
     statline: ""
   },
+  workshopPaintPrompt: "",
+  workshopPaintNegativePrompt: "",
+  workshopPaintStyle: "cinematic",
+  workshopPaintRatio: "1:1",
+  workshopPaintGenerating: false,
+  workshopPaintResults: [],
+  workshopPaintFeedback: "",
   playRound: 1,
   playChapter: getWorldProfile(FEED_DATA[0]).chapter,
   worldCommentDraftByCard: {},
   worldCommentsState: {},
+  worldActionFxUntil: {
+    like: 0,
+    favorite: 0,
+    follow: 0,
+    tip: 0
+  },
   playSceneImageReady: false,
   playEntries: getProfileOpeningEntries(getWorldProfile(FEED_DATA[0])),
   bootstrapFullLoaded: false,
@@ -731,6 +745,30 @@ function setSelectedWorldId(worldId) {
   if (!id) return;
   uiState.selectedWorldId = id;
   persistSelectedWorldId();
+}
+
+function triggerTapFeedback(node, className = "tip-anim") {
+  if (!(node instanceof HTMLElement)) return;
+  node.classList.remove(className);
+  void node.offsetWidth;
+  node.classList.add(className);
+  window.setTimeout(() => node.classList.remove(className), 620);
+}
+
+function isWorldActionFxActive(type) {
+  const key = String(type || "");
+  return Date.now() < Number(uiState.worldActionFxUntil?.[key] || 0);
+}
+
+function triggerWorldActionFx(type, duration = 620) {
+  const key = String(type || "");
+  if (!key || !uiState.worldActionFxUntil || !(key in uiState.worldActionFxUntil)) return;
+  const until = Date.now() + Math.max(220, Number(duration) || 620);
+  uiState.worldActionFxUntil[key] = until;
+  render();
+  window.setTimeout(() => {
+    if (Date.now() >= Number(uiState.worldActionFxUntil[key] || 0)) render();
+  }, Math.max(260, Number(duration) + 30));
 }
 
 function persistAuthUserId() {
@@ -1030,6 +1068,7 @@ function getPageTitleByRoute(hash) {
     "#/workshop/world/editor": "世界卡编辑器",
     "#/workshop/story/editor": "故事卡编辑器",
     "#/workshop/character/editor": "角色卡编辑器",
+    "#/workshop/paint": "AI画图",
     "#/community/create": "创建社区",
     "#/community/post": "动态详情",
     "#/community/group/post": "发动态",
@@ -1629,19 +1668,19 @@ function renderProfileAvatarPreviewModal() {
 }
 
 function getWorldShareFriends() {
-  const fromMeRelation = ME_RELATION_USERS.filter(
-    (x) => Boolean(x?.isFollowing || x?.tab === "关注" || x?.tab === "朋友")
-  ).map((x) => ({
-    id: String(x?.id || "").trim(),
-    name: String(x?.name || "").trim()
-  }));
-  const fromAuthorDirectory = Object.values(AUTHOR_DIRECTORY || {})
-    .filter((x) => Boolean(x?.followedByMe))
+  const myId = String(uiState.currentUserId || "").trim();
+  const myName = normalizeUserName(uiState.profile?.name || "");
+  const pool = ME_RELATION_USERS
+    .filter((x) => Boolean(x?.isFollowing || x?.tab === "关注" || x?.tab === "朋友"))
     .map((x) => ({
       id: String(x?.id || "").trim(),
       name: String(x?.name || "").trim()
-    }));
-  const pool = [...fromMeRelation, ...fromAuthorDirectory];
+    }))
+    .filter((x) => {
+      if (!x.name) return false;
+      if (x.id && myId && x.id === myId) return false;
+      return normalizeUserName(x.name) !== myName;
+    });
   const map = new Map();
   pool.forEach((x) => {
     if (!x.name) return;
@@ -3270,6 +3309,12 @@ function pageWorldDetail() {
   const worldCommentState = getWorldCommentState(world?.id, toMetricCount(world?.comment));
   ensureWorldCardCommentsLoaded(world);
   const worldCommentDraft = getWorldCommentDraft(world?.id);
+  const currentUserName = String(uiState.profile?.name || (uiState.isLoggedIn ? "我" : "游客"));
+  const currentUserAvatar = getAvatarText(currentUserName);
+  const likeFxClass = isWorldActionFxActive("like") ? "tap-pop" : "";
+  const favoriteFxClass = isWorldActionFxActive("favorite") ? "tap-pop" : "";
+  const followFxClass = isWorldActionFxActive("follow") ? "tap-pop" : "";
+  const tipFxClass = isWorldActionFxActive("tip") ? "tip-anim" : "";
 
   return renderExploreShell(`
     <section class="world-page world-rich">
@@ -3290,11 +3335,11 @@ function pageWorldDetail() {
                   ? `
                 <span class="world-author-name">${escapeHtml(authorProfile.name)}</span>
                 <span class="world-author-fans">${escapeHtml(authorProfile.stats.fans)} 粉丝</span>
-                <button class="world-author-action-ghost ${uiState.reserveFollowed ? "active" : ""}" data-action="toggle-reserve-follow">${uiState.reserveFollowed ? "★ 已收藏" : "☆ 收藏"}</button>
-                <button class="world-author-action-ghost" data-action="noop">👍︎ 点赞</button>
-                <button class="world-author-action-ghost" data-action="noop">♡ 打赏</button>
+                <button class="world-author-action-ghost ${uiState.reserveFollowed ? "active" : ""} ${favoriteFxClass}" data-action="toggle-reserve-follow">${uiState.reserveFollowed ? "★ 已收藏" : "☆ 收藏"}</button>
+                <button class="world-author-action-ghost" data-action="noop"><span class="icon-like-outline" aria-hidden="true"></span> 点赞</button>
+                <button class="world-author-action-ghost ${tipFxClass}" data-action="world-tip-author"><span class="icon-money-outline" aria-hidden="true"></span> 打赏</button>
                 <button
-                  class="world-author-follow-btn ${authorFollowed ? "active" : ""}"
+                  class="world-author-follow-btn ${authorFollowed ? "active" : ""} ${followFxClass}"
                   data-action="toggle-world-author-follow"
                   data-user-id="${escapeHtml(authorProfile.id || world.authorId || "")}"
                   data-user="${escapeHtml(authorProfile.name || world.author)}"
@@ -3304,11 +3349,11 @@ function pageWorldDetail() {
                   : `
                 <span class="world-author-name">${escapeHtml(authorProfile.name)}</span>
                 <span class="world-author-fans">${escapeHtml(authorProfile.stats.fans)} 粉丝</span>
-                <button class="world-author-action-ghost ${world.liked ? "active" : ""}" data-action="toggle-like-story">👍︎ 赞 ${formatMetricCount(world.like)}</button>
-                <button class="world-author-action-ghost ${world.favorited ? "active" : ""}" data-action="toggle-fav-story">☆ 收藏 ${formatMetricCount(world.star)}</button>
-                <button class="world-author-action-ghost" data-action="noop">♡ 打赏</button>
+                <button class="world-author-action-ghost ${world.liked ? "active" : ""} ${likeFxClass}" data-action="toggle-like-story"><span class="icon-like-outline" aria-hidden="true"></span> 赞 ${formatMetricCount(world.like)}</button>
+                <button class="world-author-action-ghost ${world.favorited ? "active" : ""} ${favoriteFxClass}" data-action="toggle-fav-story">☆ 收藏 ${formatMetricCount(world.star)}</button>
+                <button class="world-author-action-ghost ${tipFxClass}" data-action="world-tip-author"><span class="icon-money-outline" aria-hidden="true"></span> 打赏</button>
                 <button
-                  class="world-author-follow-btn ${authorFollowed ? "active" : ""}"
+                  class="world-author-follow-btn ${authorFollowed ? "active" : ""} ${followFxClass}"
                   data-action="toggle-world-author-follow"
                   data-user-id="${escapeHtml(authorProfile.id || world.authorId || "")}"
                   data-user="${escapeHtml(authorProfile.name || world.author)}"
@@ -3381,7 +3426,7 @@ function pageWorldDetail() {
           <h3>共${formatMetricCount(worldCommentState?.commentsCount || 0)}条评论</h3>
         </div>
         <div class="world-comment-input">
-          <span class="avatar user-link" data-action="open-user-modal"></span>
+          <button class="avatar user-link world-comment-self-avatar" data-action="${uiState.isLoggedIn ? "open-self-profile" : "open-login-modal"}">${escapeHtml(currentUserAvatar)}</button>
           <input data-field="world-comment-draft" value="${escapeHtml(worldCommentDraft)}" placeholder="说点什么..." />
           <button class="world-comment-send-btn" data-action="world-comment-submit">${worldCommentState?.submitting ? "发送中..." : "发送"}</button>
         </div>
@@ -3391,11 +3436,12 @@ function pageWorldDetail() {
           Array.isArray(worldCommentState?.comments) && worldCommentState.comments.length
             ? worldCommentState.comments
               .map((c) => `
-              <article class="world-comment-item">
-                <span class="avatar user-link" data-action="open-user-modal">${escapeHtml(String(c.user || "玩").slice(0, 1))}</span>
-                <div>
-                  <div class="meta">${escapeHtml(c.user || "玩家")} · ${escapeHtml(formatWorldCommentTime(c.createdAt || c.time || ""))}</div>
-                  <p>${escapeHtml(c.text || "")}</p>
+              <article class="world-comment-item ${worldCommentState?.activeReplyCommentId === String(c.id || "") ? "is-replying" : ""}">
+                <button class="avatar user-link" data-action="open-user-modal" data-user="${escapeHtml(c.user || "玩家")}">${escapeHtml(getAvatarText(String(c.user || "玩家")))}</button>
+                <div class="world-comment-body">
+                  <div class="meta" data-action="world-comment-open-reply" data-id="${escapeHtml(c.id || "")}">${escapeHtml(c.user || "玩家")} · ${escapeHtml(formatWorldCommentTime(c.createdAt || c.time || ""))}</div>
+                  <p class="world-comment-text" data-action="world-comment-open-reply" data-id="${escapeHtml(c.id || "")}">${escapeHtml(c.text || "")}</p>
+                  <div class="world-comment-actions">
                   <button
                     class="world-comment-like-btn ${c.likedByMe ? "active" : ""}"
                     data-action="world-comment-like"
@@ -3403,6 +3449,48 @@ function pageWorldDetail() {
                     data-liked="${c.likedByMe ? "1" : "0"}"
                     ${worldCommentState?.likingByCommentId?.[c.id] ? "disabled" : ""}
                   >♡ ${formatMetricCount(c.likes || 0)}</button>
+                    <button class="world-comment-reply-btn" data-action="world-comment-open-reply" data-id="${escapeHtml(c.id || "")}">回复</button>
+                    ${
+                      String(c.userId || "") === String(uiState.currentUserId || "")
+                        ? `<button class="world-comment-delete-btn" data-action="world-comment-delete" data-id="${escapeHtml(c.id || "")}" ${worldCommentState?.deletingByCommentId?.[c.id] ? "disabled" : ""}>${worldCommentState?.deletingByCommentId?.[c.id] ? "删除中..." : "删除"}</button>`
+                        : ""
+                    }
+                  </div>
+                  ${
+                    Array.isArray(c.replies) && c.replies.length
+                      ? `
+                    <div class="world-reply-list">
+                      ${c.replies
+                        .map((r) => `
+                          <div class="world-reply-item">
+                            <button class="avatar world-reply-avatar user-link" data-action="open-user-modal" data-user="${escapeHtml(r.user || "玩家")}">${escapeHtml(getAvatarText(String(r.user || "玩家")))}</button>
+                            <div class="world-reply-main">
+                              <div class="meta">${escapeHtml(r.user || "玩家")} · ${escapeHtml(formatWorldCommentTime(r.createdAt || r.time || ""))}</div>
+                              <p>${escapeHtml(r.text || "")}</p>
+                              ${
+                                String(r.userId || "") === String(uiState.currentUserId || "")
+                                  ? `<button class="world-comment-delete-btn small" data-action="world-comment-delete" data-id="${escapeHtml(r.id || "")}" ${worldCommentState?.deletingByCommentId?.[r.id] ? "disabled" : ""}>${worldCommentState?.deletingByCommentId?.[r.id] ? "删除中..." : "删除"}</button>`
+                                  : ""
+                              }
+                            </div>
+                          </div>
+                        `)
+                        .join("")}
+                    </div>
+                  `
+                      : ""
+                  }
+                  ${
+                    worldCommentState?.activeReplyCommentId === String(c.id || "")
+                      ? `
+                    <div class="world-reply-editor">
+                      <input data-field="world-reply-draft" data-comment-id="${escapeHtml(c.id || "")}" value="${escapeHtml(String(worldCommentState?.replyDraftByCommentId?.[c.id] || ""))}" placeholder="回复 ${escapeHtml(c.user || "玩家")}..." />
+                      <button class="ghost" data-action="world-comment-reply-cancel">取消</button>
+                      <button class="primary" data-action="world-comment-reply-submit" data-id="${escapeHtml(c.id || "")}" ${worldCommentState?.submittingReplyByCommentId?.[c.id] ? "disabled" : ""}>${worldCommentState?.submittingReplyByCommentId?.[c.id] ? "发送中..." : "发送"}</button>
+                    </div>
+                  `
+                      : ""
+                  }
                 </div>
               </article>
             `)
@@ -3550,9 +3638,11 @@ function updateMessageInboxPreview(messageId, preview) {
   moveMessageToTop(messageId);
 }
 
-function pushThreadMessage(messageId, text, from = "me") {
+function pushThreadMessage(messageId, text, from = "me", extra = {}) {
   const messages = ensureMessageThread(messageId);
-  messages.push({ from, text, time: "刚刚", read: from !== "me" });
+  const messageType = String(extra.type || "text");
+  const payload = extra.payload && typeof extra.payload === "object" ? extra.payload : {};
+  messages.push({ from, type: messageType, payload, text, time: "刚刚", read: from !== "me" });
   if (from === "me") {
     updateMessageInboxPreview(messageId, text);
     markMessageRead(messageId);
@@ -3591,6 +3681,8 @@ function toThreadViewMessages(rows, currentUserId) {
   return rows.map((row) => ({
     id: String(row?.id || ""),
     from: String(row?.sender_id || "") === String(currentUserId || "") ? "me" : "other",
+    type: String(row?.message_type || "text"),
+    payload: row?.payload && typeof row.payload === "object" ? row.payload : {},
     text: String(row?.content || ""),
     time: formatThreadClock(row?.created_at),
     read: Boolean(row?.read_by_peer)
@@ -3605,6 +3697,8 @@ function threadViewChanged(prev = [], next = []) {
     const b = next[i] || {};
     if ((a.id || "") !== (b.id || "")) return true;
     if ((a.text || "") !== (b.text || "")) return true;
+    if ((a.type || "text") !== (b.type || "text")) return true;
+    if (JSON.stringify(a.payload || {}) !== JSON.stringify(b.payload || {})) return true;
     if ((a.from || "") !== (b.from || "")) return true;
     if ((a.time || "") !== (b.time || "")) return true;
     if (Boolean(a.read) !== Boolean(b.read)) return true;
@@ -4523,14 +4617,21 @@ function getWorldCommentState(worldCardId, fallbackCount = 0) {
   const id = String(worldCardId || "").trim();
   if (!id) return null;
   if (!uiState.worldCommentsState[id]) {
+    const cached = readWorldCommentsCache(id);
     uiState.worldCommentsState[id] = {
       loaded: false,
       loading: false,
       submitting: false,
       error: "",
-      comments: [],
-      commentsCount: Number(fallbackCount || 0),
-      likingByCommentId: {}
+      comments: Array.isArray(cached?.comments) ? cached.comments : [],
+      commentsCount: Number.isFinite(Number(cached?.commentsCount))
+        ? Number(cached.commentsCount)
+        : Number(fallbackCount || 0),
+      likingByCommentId: {},
+      deletingByCommentId: {},
+      submittingReplyByCommentId: {},
+      activeReplyCommentId: "",
+      replyDraftByCommentId: {}
     };
   } else if (!Number.isFinite(Number(uiState.worldCommentsState[id].commentsCount || 0))) {
     uiState.worldCommentsState[id].commentsCount = Number(fallbackCount || 0);
@@ -4550,6 +4651,74 @@ function setWorldCommentDraft(worldCardId, text) {
   uiState.worldCommentDraftByCard[id] = String(text || "");
 }
 
+function getWorldCommentsCacheKey(worldCardId) {
+  const id = String(worldCardId || "").trim();
+  return id ? `${WORLD_COMMENTS_CACHE_PREFIX}${id}` : "";
+}
+
+function readWorldCommentsCache(worldCardId) {
+  const key = getWorldCommentsCacheKey(worldCardId);
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const comments = Array.isArray(parsed.comments) ? parsed.comments : [];
+    return {
+      comments,
+      commentsCount: Number(parsed.commentsCount || comments.length || 0)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistWorldCommentsCache(worldCardId, state) {
+  const key = getWorldCommentsCacheKey(worldCardId);
+  if (!key || !state) return;
+  try {
+    const payload = {
+      comments: Array.isArray(state.comments) ? state.comments : [],
+      commentsCount: Number(state.commentsCount || 0),
+      savedAt: Date.now()
+    };
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function mergeWorldCommentsWithCache(serverComments = [], cachedComments = []) {
+  const safeServer = Array.isArray(serverComments) ? serverComments : [];
+  const safeCached = Array.isArray(cachedComments) ? cachedComments : [];
+  const cachedById = new Map();
+  safeCached.forEach((item) => {
+    const id = String(item?.id || "").trim();
+    if (id) cachedById.set(id, item);
+  });
+  const merged = safeServer.map((item) => {
+    const id = String(item?.id || "").trim();
+    const cached = id ? cachedById.get(id) : null;
+    const serverReplies = Array.isArray(item?.replies) ? item.replies : [];
+    const cachedReplies = Array.isArray(cached?.replies) ? cached.replies : [];
+    const replyMap = new Map();
+    serverReplies.forEach((r) => {
+      const rid = String(r?.id || "").trim();
+      if (rid) replyMap.set(rid, r);
+    });
+    cachedReplies.forEach((r) => {
+      const rid = String(r?.id || "").trim();
+      if (rid && !replyMap.has(rid)) replyMap.set(rid, r);
+    });
+    return {
+      ...item,
+      replies: Array.from(replyMap.values())
+    };
+  });
+  return merged;
+}
+
 async function loadWorldCardComments(worldCardId) {
   const uid = String(uiState.currentUserId || "").trim();
   const query = new URLSearchParams({
@@ -4564,16 +4733,32 @@ async function loadWorldCardComments(worldCardId) {
   };
 }
 
-async function createWorldCardCommentAndSync(worldCardId, text) {
+async function createWorldCardCommentAndSync(worldCardId, text, parentCommentId = "") {
   if (!uiState.currentUserId) throw new Error("USER_NOT_READY");
-  const data = await apiJson("/worldcards/comments", {
+  const payload = {
     worldCardId,
     userId: uiState.currentUserId,
     content: text
-  });
+  };
+  const parentId = String(parentCommentId || "").trim();
+  if (parentId) payload.parentCommentId = parentId;
+  const data = await apiJson("/worldcards/comments", payload);
   return {
     comment: data?.comment || null,
     commentsCount: Number(data?.commentsCount || 0)
+  };
+}
+
+async function deleteWorldCardCommentAndSync(commentId) {
+  if (!uiState.currentUserId) throw new Error("USER_NOT_READY");
+  const data = await apiJson("/worldcards/comments/delete", {
+    commentId,
+    userId: uiState.currentUserId
+  });
+  return {
+    commentsCount: Number(data?.commentsCount || 0),
+    deletedCount: Number(data?.deletedCount || 0),
+    topLevelDeleted: Number(data?.topLevelDeleted || 0)
   };
 }
 
@@ -4597,11 +4782,17 @@ function ensureWorldCardCommentsLoaded(world) {
   state.error = "";
   void loadWorldCardComments(worldId)
     .then(({ comments, commentsCount }) => {
-      state.comments = comments;
+      const cached = readWorldCommentsCache(worldId);
+      const serverNormalized = (Array.isArray(comments) ? comments : []).map((item) => ({
+        ...item,
+        replies: Array.isArray(item?.replies) ? item.replies : []
+      }));
+      state.comments = mergeWorldCommentsWithCache(serverNormalized, cached?.comments || []);
       state.commentsCount = Number.isFinite(commentsCount) && commentsCount >= 0 ? commentsCount : comments.length;
       state.loaded = true;
       state.loading = false;
       syncWorldStateEverywhere(worldId, { comment: formatMetricCount(state.commentsCount) });
+      persistWorldCommentsCache(worldId, state);
       render();
     })
     .catch((err) => {
@@ -4633,13 +4824,16 @@ function ensureDynamicCommentsLoaded(item) {
     });
 }
 
-async function sendMessageToThread(conversationId, text) {
+async function sendMessageToThread(conversationId, text, options = {}) {
   if (!uiState.currentUserId) throw new Error("USER_NOT_READY");
+  const messageType = String(options.messageType || "text");
+  const payload = options.payload && typeof options.payload === "object" ? options.payload : {};
   const data = await apiJson("/messages/send", {
     conversationId,
     senderId: uiState.currentUserId,
     content: text,
-    messageType: "text",
+    messageType,
+    payload,
     clientMessageId: `${Date.now()}_${Math.random().toString(16).slice(2, 8)}`
   });
   return data?.message || null;
@@ -4968,6 +5162,34 @@ function buildProviderHintMessage(response) {
   return `引擎：${provider}（${reason}）`;
 }
 
+function normalizeStoryCardPayload(payload = {}) {
+  const worldId = getSafeWorldId(payload.worldId || payload.wid || payload.id || "", 0);
+  const title = String(payload.title || "").trim() || "故事卡";
+  const desc = String(payload.desc || payload.subtitle || "").trim();
+  const author = String(payload.author || "").trim();
+  return { worldId, title, desc, author };
+}
+
+function renderThreadMessageBubble(message) {
+  const type = String(message?.type || "text");
+  if (type !== "story_card") {
+    return `<div class="dm-modern-bubble">${escapeHtml(String(message?.text || ""))}</div>`;
+  }
+  const card = normalizeStoryCardPayload(message?.payload || {});
+  if (!card.worldId) {
+    return `<div class="dm-modern-bubble">${escapeHtml(String(message?.text || ""))}</div>`;
+  }
+  const subtitle = [card.author ? `作者：${card.author}` : "", card.desc || ""].filter(Boolean).join(" · ");
+  return `
+    <article class="dm-story-share-card" data-action="open-world-detail" data-id="${card.worldId}">
+      <small>故事卡分享</small>
+      <h4>${escapeHtml(card.title)}</h4>
+      ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
+      <button data-action="open-world-detail" data-id="${card.worldId}">点击进入详情</button>
+    </article>
+  `;
+}
+
 function pageDirectMessage() {
   if (!uiState.isLoggedIn) {
     return renderMessageGuestState("登录后查看私信", "查看聊天记录、已读状态和快捷回复。");
@@ -5018,7 +5240,7 @@ function pageDirectMessage() {
             <div class="dm-modern-row ${m.from === "me" ? "right" : "left"}">
               ${m.from === "other" ? `<span class="dm-modern-avatar user-avatar-click">${chatMeta.name.slice(0, 1)}</span>` : ""}
               <div class="dm-modern-bubble-wrap">
-                <div class="dm-modern-bubble">${m.text}</div>
+                ${renderThreadMessageBubble(m)}
                 ${
                   m.from === "me" && !messages.slice(idx + 1).some((x) => x.from === "me")
                     ? `<div class="dm-read-flag">${m.read ? "已读" : "送达"}</div>`
@@ -5680,6 +5902,32 @@ function getWorkshopModeLabel(mode = "long_narrative") {
   return WORKSHOP_MODE_META[mode]?.label || mode;
 }
 
+function getWorkshopPaintSizeByRatio(ratio = "1:1") {
+  if (ratio === "16:9") return { width: 1280, height: 720 };
+  if (ratio === "9:16") return { width: 720, height: 1280 };
+  if (ratio === "4:3") return { width: 1280, height: 960 };
+  if (ratio === "3:4") return { width: 960, height: 1280 };
+  return { width: 1024, height: 1024 };
+}
+
+function buildWorkshopPaintPreviewUrls({
+  prompt = "",
+  style = "cinematic",
+  ratio = "1:1",
+  negative = ""
+}) {
+  const p = String(prompt || "").trim();
+  const s = String(style || "cinematic").trim();
+  const n = String(negative || "").trim();
+  const { width, height } = getWorkshopPaintSizeByRatio(ratio);
+  const basePrompt = `${p}, ${s} style, highly detailed, best quality${n ? `, avoid: ${n}` : ""}`;
+  return new Array(4).fill(0).map((_, idx) => {
+    const seed = Math.floor(Math.random() * 100000) + idx * 97;
+    const src = `https://image.pollinations.ai/prompt/${encodeURIComponent(basePrompt)}?seed=${seed}&width=${width}&height=${height}&nologo=true`;
+    return { id: `paint_${Date.now()}_${idx}`, url: src, seed, width, height };
+  });
+}
+
 function buildCreatorWorks() {
   return [...uiState.workshopSavedCards]
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
@@ -5772,6 +6020,13 @@ function pageWorkshopEntry() {
       desc: "塑造高辨识度互动角色，配置语气风格、边界与成长里程碑。",
       intro: "适合角色向玩法，聚焦关系推进、情绪互动与长期记忆。",
       go: "#/workshop/character/editor"
+    },
+    {
+      icon: "🖼️",
+      title: "AI画图",
+      desc: "输入提示词即可快速产出视觉参考图，用于封面、灵感图和场景草图。",
+      intro: "支持风格、比例和负向词设置，生成后可直接挑图使用。",
+      go: "#/workshop/paint"
     }
   ];
   return renderExploreShell(`
@@ -5986,6 +6241,67 @@ function pageWorkshopCharacterEditor() {
   uiState.workshopMode = "virtual_character";
   uiState.workshopAuthoringMode = getWorkshopEffectiveAuthoringMode("virtual_character");
   return pageWorkshop();
+}
+
+function pageWorkshopPaint() {
+  const styleOptions = [
+    { value: "cinematic", label: "电影感" },
+    { value: "anime", label: "二次元" },
+    { value: "realistic", label: "写实" },
+    { value: "illustration", label: "插画" },
+    { value: "watercolor", label: "水彩" },
+    { value: "pixel art", label: "像素风" }
+  ];
+  const ratioOptions = ["1:1", "16:9", "9:16", "4:3", "3:4"];
+  const hasResults = Array.isArray(uiState.workshopPaintResults) && uiState.workshopPaintResults.length > 0;
+  return renderExploreShell(`
+    <section class="workshop-studio workshop-paint-page">
+      <header class="workshop-editor-head workshop-paint-head">
+        <h2>AI画图</h2>
+        <p>写下你想要的画面描述，选择风格与比例，一键生成灵感图。</p>
+      </header>
+      <article class="workshop-paint-panel">
+        <div class="workshop-paint-grid">
+          <label>正向提示词
+            <textarea data-field="workshop-paint-prompt" placeholder="例如：雨夜霓虹街头，少女撑透明伞站在路口，电影光影，细节丰富">${escapeHtml(uiState.workshopPaintPrompt || "")}</textarea>
+          </label>
+          <label>负向提示词（可选）
+            <textarea data-field="workshop-paint-negative" placeholder="例如：低清晰度、模糊、畸形手指、文字水印">${escapeHtml(uiState.workshopPaintNegativePrompt || "")}</textarea>
+          </label>
+          <label>画面风格
+            <select data-field="workshop-paint-style">
+              ${styleOptions.map((item) => `<option value="${item.value}" ${uiState.workshopPaintStyle === item.value ? "selected" : ""}>${item.label}</option>`).join("")}
+            </select>
+          </label>
+          <label>图片比例
+            <select data-field="workshop-paint-ratio">
+              ${ratioOptions.map((item) => `<option value="${item}" ${uiState.workshopPaintRatio === item ? "selected" : ""}>${item}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+        <div class="workshop-paint-actions">
+          <button class="primary" data-action="workshop-paint-generate" ${uiState.workshopPaintGenerating ? "disabled" : ""}>${uiState.workshopPaintGenerating ? "生成中..." : "开始生成"}</button>
+          <button data-action="workshop-paint-clear">清空结果</button>
+        </div>
+        ${uiState.workshopPaintFeedback ? `<p class="workshop-feedback">${escapeHtml(uiState.workshopPaintFeedback)}</p>` : ""}
+      </article>
+      <section class="workshop-paint-result-grid">
+        ${
+          hasResults
+            ? uiState.workshopPaintResults.map((item, idx) => `
+              <article class="workshop-paint-card">
+                <img src="${escapeHtml(item.url || "")}" alt="AI画图结果 ${idx + 1}" loading="lazy" />
+                <footer>
+                  <span>Seed ${item.seed}</span>
+                  <small>${item.width} × ${item.height}</small>
+                </footer>
+              </article>
+            `).join("")
+            : '<p class="workshop-paint-empty">还没有生成结果，先输入提示词试试。</p>'
+        }
+      </section>
+    </section>
+  `);
 }
 
 function renderCommunityHero(activeTab = "home") {
@@ -7686,6 +8002,7 @@ const renderers = {
   "#/workshop/world/editor": pageWorkshopWorldEditor,
   "#/workshop/story/editor": pageWorkshopStoryEditor,
   "#/workshop/character/editor": pageWorkshopCharacterEditor,
+  "#/workshop/paint": pageWorkshopPaint,
   "#/community/home": pageCommunity,
   "#/community/join": pageCommunityJoin,
   "#/community/mine": pageCommunityMine,
@@ -7728,6 +8045,16 @@ const renderers = {
 
 function render() {
   const current = window.location.hash || "#/theater/home";
+  const active = document.activeElement instanceof HTMLInputElement
+    ? document.activeElement
+    : null;
+  const activeField = active?.getAttribute("data-field") || "";
+  const activeCommentId = active?.getAttribute("data-comment-id") || "";
+  const preserveWorldInput = (current === "#/world/detail")
+    && (activeField === "world-comment-draft" || activeField === "world-reply-draft");
+  const preserveSelectionStart = preserveWorldInput ? Number(active?.selectionStart ?? -1) : -1;
+  const preserveSelectionEnd = preserveWorldInput ? Number(active?.selectionEnd ?? -1) : -1;
+
   document.body.classList.toggle("play-route", current.startsWith("#/play"));
   document.body.classList.toggle("message-thread-route", current.startsWith("#/messages/thread"));
   document.body.classList.toggle("world-detail-route", current === "#/world/detail");
@@ -7738,6 +8065,24 @@ function render() {
   ensureDramaHeroTimer();
   ensureMessageRealtimeSync();
   focusSearchInputIfNeeded();
+  if (preserveWorldInput) {
+    requestAnimationFrame(() => {
+      const selector = activeField === "world-reply-draft"
+        ? `.world-reply-editor input[data-field="world-reply-draft"][data-comment-id="${activeCommentId}"]`
+        : `input[data-field="world-comment-draft"]`;
+      const nextInput = document.querySelector(selector);
+      if (!(nextInput instanceof HTMLInputElement)) return;
+      nextInput.focus();
+      const len = nextInput.value.length;
+      const start = preserveSelectionStart >= 0 ? Math.min(preserveSelectionStart, len) : len;
+      const end = preserveSelectionEnd >= 0 ? Math.min(preserveSelectionEnd, len) : start;
+      try {
+        nextInput.setSelectionRange(start, end);
+      } catch {
+        // ignore selection errors for unsupported input states
+      }
+    });
+  }
   ensureFullDataOnDemand(current);
 }
 
@@ -7919,6 +8264,16 @@ document.addEventListener("click", (event) => {
   const actionTarget = event.target.closest("[data-action]");
   if (actionTarget) {
     const action = actionTarget.getAttribute("data-action");
+
+    if (action === "world-tip-author") {
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      triggerWorldActionFx("tip", 620);
+      return;
+    }
 
     if (action === "noop") {
       return;
@@ -8345,8 +8700,11 @@ document.addEventListener("click", (event) => {
       uiState.messageThreadMenuOpen = false;
       render();
       void sendMessageToThread(activeId, text)
-        .then(() => {
-          pushThreadMessage(activeId, text, "me");
+        .then((message) => {
+          pushThreadMessage(activeId, text, "me", {
+            type: String(message?.message_type || "text"),
+            payload: message?.payload && typeof message.payload === "object" ? message.payload : {}
+          });
           uiState.messageReadAckConversationId = "";
           render();
           requestAnimationFrame(() => {
@@ -8646,6 +9004,31 @@ document.addEventListener("click", (event) => {
         uiState.workshopFeedback = "当前模式已重置为默认模板";
       }
       uiState.workshopCustomParsed = null;
+      render();
+      return;
+    }
+    if (action === "workshop-paint-generate") {
+      const prompt = String(uiState.workshopPaintPrompt || "").trim();
+      if (!prompt) {
+        uiState.workshopPaintFeedback = "请先输入提示词";
+        render();
+        return;
+      }
+      uiState.workshopPaintGenerating = true;
+      uiState.workshopPaintFeedback = "已生成 4 张预览图，你可以继续修改提示词再试。";
+      uiState.workshopPaintResults = buildWorkshopPaintPreviewUrls({
+        prompt,
+        style: uiState.workshopPaintStyle,
+        ratio: uiState.workshopPaintRatio,
+        negative: uiState.workshopPaintNegativePrompt
+      });
+      uiState.workshopPaintGenerating = false;
+      render();
+      return;
+    }
+    if (action === "workshop-paint-clear") {
+      uiState.workshopPaintResults = [];
+      uiState.workshopPaintFeedback = "已清空画图结果";
       render();
       return;
     }
@@ -9479,15 +9862,25 @@ document.addEventListener("click", (event) => {
         return;
       }
       const extraText = String(uiState.worldShareDraft || "").trim();
-      const payload = `${extraText ? `${extraText}\n` : ""}${buildWorldShareMessage(getSelectedWorld())}`;
+      const world = getSelectedWorld();
+      const cardPayload = {
+        worldId: String(world?.id || ""),
+        title: String(world?.title || "未命名故事卡"),
+        desc: String(world?.desc || "来看看这张故事卡"),
+        author: String(world?.author || "")
+      };
+      const payload = extraText || `给你分享一个我觉得不错的故事卡：${cardPayload.title}`;
       void startOrReuseDirectConversation(targetUserId, targetName, { navigate: false })
         .then((conversationId) => {
           if (!conversationId) return;
-          return sendMessageToThread(conversationId, payload).then(() => conversationId);
+          return sendMessageToThread(conversationId, payload, {
+            messageType: "story_card",
+            payload: cardPayload
+          }).then(() => conversationId);
         })
         .then((conversationId) => {
           if (!conversationId) return;
-          updateMessageInboxPreview(conversationId, "📨 故事卡分享");
+          updateMessageInboxPreview(conversationId, `📨 故事卡：${cardPayload.title}`);
           uiState.worldShareFeedback = "已发送给好友";
           uiState.worldShareMode = "picker";
           uiState.worldShareDraft = "";
@@ -9516,6 +9909,7 @@ document.addEventListener("click", (event) => {
         render();
         return;
       }
+      triggerWorldActionFx("like", 420);
       const prevLiked = Boolean(world.liked);
       const prevLikeCount = toMetricCount(world.like);
       const nextLiked = !prevLiked;
@@ -9566,6 +9960,7 @@ document.addEventListener("click", (event) => {
         render();
         return;
       }
+      triggerWorldActionFx("favorite", 420);
       const prevFavorited = Boolean(world.favorited);
       const prevFavCount = toMetricCount(world.star);
       const nextFavorited = !prevFavorited;
@@ -9623,10 +10018,13 @@ document.addEventListener("click", (event) => {
 
       const optimistic = {
         id: `tmp_${Date.now()}`,
+        userId: String(uiState.currentUserId || ""),
         user: String(uiState.profile?.name || "我"),
         text,
         likes: 0,
         likedByMe: false,
+        parentCommentId: null,
+        replies: [],
         createdAt: new Date().toISOString(),
         time: "刚刚"
       };
@@ -9637,16 +10035,21 @@ document.addEventListener("click", (event) => {
       state.commentsCount = prevCount + 1;
       setWorldCommentDraft(world.id, "");
       syncWorldStateEverywhere(world.id, { comment: formatMetricCount(state.commentsCount) });
+      persistWorldCommentsCache(world.id, state);
       render();
 
       void createWorldCardCommentAndSync(world.id, text)
         .then(({ comment, commentsCount }) => {
           state.submitting = false;
           if (comment) {
-            state.comments[0] = comment;
+            state.comments[0] = {
+              ...comment,
+              replies: Array.isArray(comment?.replies) ? comment.replies : []
+            };
           }
           state.commentsCount = Number.isFinite(commentsCount) && commentsCount >= 0 ? commentsCount : state.comments.length;
           syncWorldStateEverywhere(world.id, { comment: formatMetricCount(state.commentsCount) });
+          persistWorldCommentsCache(world.id, state);
           render();
         })
         .catch((err) => {
@@ -9656,6 +10059,181 @@ document.addEventListener("click", (event) => {
           state.error = err instanceof Error ? err.message : "评论失败";
           setWorldCommentDraft(world.id, text);
           syncWorldStateEverywhere(world.id, { comment: formatMetricCount(state.commentsCount) });
+          persistWorldCommentsCache(world.id, state);
+          render();
+        });
+      return;
+    }
+    if (action === "world-comment-open-reply") {
+      const world = getSelectedWorld();
+      if (!world?.id) return;
+      const state = getWorldCommentState(world.id, toMetricCount(world.comment));
+      if (!state) return;
+      const commentId = String(actionTarget.getAttribute("data-id") || "").trim();
+      if (!commentId) return;
+      state.activeReplyCommentId = commentId;
+      if (!String(state.replyDraftByCommentId?.[commentId] || "").trim()) {
+        const targetComment = (state.comments || []).find((x) => String(x.id || "") === commentId);
+        if (targetComment?.user) {
+          state.replyDraftByCommentId[commentId] = `@${targetComment.user} `;
+        }
+      }
+      render();
+      requestAnimationFrame(() => {
+        const input = document.querySelector(`.world-reply-editor input[data-comment-id="${commentId}"]`);
+        if (input instanceof HTMLInputElement) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      });
+      return;
+    }
+    if (action === "world-comment-reply-cancel") {
+      const world = getSelectedWorld();
+      if (!world?.id) return;
+      const state = getWorldCommentState(world.id, toMetricCount(world.comment));
+      if (!state) return;
+      state.activeReplyCommentId = "";
+      render();
+      return;
+    }
+    if (action === "world-comment-reply-submit") {
+      const world = getSelectedWorld();
+      if (!world?.id) return;
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      const state = getWorldCommentState(world.id, toMetricCount(world.comment));
+      if (!state) return;
+      const commentId = String(actionTarget.getAttribute("data-id") || "").trim();
+      if (!commentId) return;
+      if (state.submittingReplyByCommentId[commentId]) return;
+      const parentIdx = state.comments.findIndex((x) => String(x.id || "") === commentId);
+      if (parentIdx < 0) return;
+      const text = String(state.replyDraftByCommentId?.[commentId] || "").trim();
+      if (!text) return;
+
+      const parent = state.comments[parentIdx];
+      if (!Array.isArray(parent.replies)) parent.replies = [];
+      const optimisticReply = {
+        id: `tmp_reply_${Date.now()}`,
+        worldCardId: world.id,
+        userId: String(uiState.currentUserId || ""),
+        parentCommentId: commentId,
+        user: String(uiState.profile?.name || "我"),
+        text,
+        likes: 0,
+        likedByMe: false,
+        createdAt: new Date().toISOString(),
+        time: "刚刚"
+      };
+      parent.replies.push(optimisticReply);
+      state.submittingReplyByCommentId[commentId] = true;
+      state.replyDraftByCommentId[commentId] = "";
+      state.activeReplyCommentId = "";
+      persistWorldCommentsCache(world.id, state);
+      render();
+
+      void createWorldCardCommentAndSync(world.id, text, commentId)
+        .then(({ comment }) => {
+          state.submittingReplyByCommentId[commentId] = false;
+          const latestParent = state.comments.find((x) => String(x.id || "") === commentId);
+          if (!latestParent) {
+            render();
+            return;
+          }
+          if (!Array.isArray(latestParent.replies)) latestParent.replies = [];
+          const idx = latestParent.replies.findIndex((x) => x === optimisticReply);
+          if (idx >= 0) {
+            latestParent.replies[idx] = comment || optimisticReply;
+          }
+          delete state.replyDraftByCommentId[commentId];
+          persistWorldCommentsCache(world.id, state);
+          render();
+        })
+        .catch((err) => {
+          state.submittingReplyByCommentId[commentId] = false;
+          const latestParent = state.comments.find((x) => String(x.id || "") === commentId);
+          if (latestParent && Array.isArray(latestParent.replies)) {
+            latestParent.replies = latestParent.replies.filter((x) => x !== optimisticReply);
+          }
+          state.error = err instanceof Error ? err.message : "回复失败";
+          state.replyDraftByCommentId[commentId] = text;
+          state.activeReplyCommentId = commentId;
+          persistWorldCommentsCache(world.id, state);
+          render();
+        });
+      return;
+    }
+    if (action === "world-comment-delete") {
+      const world = getSelectedWorld();
+      if (!world?.id) return;
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      const commentId = String(actionTarget.getAttribute("data-id") || "").trim();
+      if (!commentId) return;
+      const state = getWorldCommentState(world.id, toMetricCount(world.comment));
+      if (!state || state.deletingByCommentId[commentId]) return;
+
+      let removedTopLevel = false;
+      let removedItem = null;
+      let parentRef = null;
+      const topIdx = state.comments.findIndex((x) => String(x.id || "") === commentId);
+      if (topIdx >= 0) {
+        removedTopLevel = true;
+        removedItem = state.comments[topIdx];
+        state.comments.splice(topIdx, 1);
+      } else {
+        for (const parent of state.comments) {
+          if (!Array.isArray(parent.replies)) continue;
+          const ridx = parent.replies.findIndex((x) => String(x.id || "") === commentId);
+          if (ridx >= 0) {
+            removedItem = parent.replies[ridx];
+            parentRef = parent;
+            parent.replies.splice(ridx, 1);
+            break;
+          }
+        }
+      }
+      if (!removedItem) return;
+      if (removedTopLevel) {
+        state.commentsCount = Math.max(0, Number(state.commentsCount || 0) - 1);
+        syncWorldStateEverywhere(world.id, { comment: formatMetricCount(state.commentsCount) });
+      }
+      state.deletingByCommentId[commentId] = true;
+      if (state.activeReplyCommentId === commentId) state.activeReplyCommentId = "";
+      persistWorldCommentsCache(world.id, state);
+      render();
+
+      void deleteWorldCardCommentAndSync(commentId)
+        .then(({ commentsCount }) => {
+          state.deletingByCommentId[commentId] = false;
+          if (removedTopLevel) {
+            state.commentsCount = Number.isFinite(commentsCount) && commentsCount >= 0
+              ? commentsCount
+              : Number(state.commentsCount || 0);
+            syncWorldStateEverywhere(world.id, { comment: formatMetricCount(state.commentsCount) });
+          }
+          persistWorldCommentsCache(world.id, state);
+          render();
+        })
+        .catch((err) => {
+          state.deletingByCommentId[commentId] = false;
+          if (removedTopLevel) {
+            state.comments.unshift(removedItem);
+            state.commentsCount = Number(state.commentsCount || 0) + 1;
+            syncWorldStateEverywhere(world.id, { comment: formatMetricCount(state.commentsCount) });
+          } else if (parentRef) {
+            if (!Array.isArray(parentRef.replies)) parentRef.replies = [];
+            parentRef.replies.unshift(removedItem);
+          }
+          state.error = err instanceof Error ? err.message : "删除失败";
+          persistWorldCommentsCache(world.id, state);
           render();
         });
       return;
@@ -9794,6 +10372,7 @@ document.addEventListener("click", (event) => {
         render();
         return;
       }
+      triggerWorldActionFx("follow", 420);
       const nowFollowed = Boolean(AUTHOR_DIRECTORY[targetUserId]?.followedByMe);
       const nextFollow = !nowFollowed;
       queuePendingFollowOp(targetUserId, nextFollow);
@@ -9927,6 +10506,7 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "toggle-reserve-follow") {
+      triggerWorldActionFx("favorite", 420);
       uiState.reserveFollowed = !uiState.reserveFollowed;
       uiState.reserveFeedback = uiState.reserveFollowed ? "预约成功，开播会第一时间通知你。" : "已取消预约提醒。";
       render();
@@ -10071,6 +10651,15 @@ document.addEventListener("input", (event) => {
       setWorldCommentDraft(getSelectedWorld()?.id, target.value);
       return;
     }
+    if (dynamicField === "world-reply-draft") {
+      const world = getSelectedWorld();
+      const state = getWorldCommentState(world?.id, toMetricCount(world?.comment));
+      const commentId = String(target.getAttribute("data-comment-id") || "").trim();
+      if (state && commentId) {
+        state.replyDraftByCommentId[commentId] = target.value;
+      }
+      return;
+    }
     if (dynamicField === "backstage-signature") {
       uiState.backstageSignatureDraft = target.value;
       return;
@@ -10093,6 +10682,14 @@ document.addEventListener("input", (event) => {
     }
     if (dynamicField === "workshop-custom-raw") {
       uiState.workshopCustomRaw = target.value;
+      return;
+    }
+    if (dynamicField === "workshop-paint-prompt") {
+      uiState.workshopPaintPrompt = target.value;
+      return;
+    }
+    if (dynamicField === "workshop-paint-negative") {
+      uiState.workshopPaintNegativePrompt = target.value;
       return;
     }
     if (dynamicField.startsWith("workshop-world-")) {
@@ -10183,6 +10780,15 @@ document.addEventListener("input", (event) => {
       setWorldCommentDraft(getSelectedWorld()?.id, target.value);
       return;
     }
+    if (dynamicField === "world-reply-draft") {
+      const world = getSelectedWorld();
+      const state = getWorldCommentState(world?.id, toMetricCount(world?.comment));
+      const commentId = String(target.getAttribute("data-comment-id") || "").trim();
+      if (state && commentId) {
+        state.replyDraftByCommentId[commentId] = target.value;
+      }
+      return;
+    }
     if (dynamicField.startsWith("workshop-world-")) {
       setWorkshopDraftField("long_narrative", dynamicField.replace("workshop-world-", ""), target.value);
       return;
@@ -10238,6 +10844,14 @@ document.addEventListener("change", (event) => {
     uiState.workshopSelectedTemplateId[uiState.workshopMode] = target.value;
     return;
   }
+  if (target instanceof HTMLSelectElement && target.getAttribute("data-field") === "workshop-paint-style") {
+    uiState.workshopPaintStyle = target.value;
+    return;
+  }
+  if (target instanceof HTMLSelectElement && target.getAttribute("data-field") === "workshop-paint-ratio") {
+    uiState.workshopPaintRatio = target.value;
+    return;
+  }
   if (!(target instanceof HTMLInputElement)) return;
   const field = target.getAttribute("data-field");
   if (field !== "community-create-cover-file" && field !== "me-hero-cover-file") return;
@@ -10279,6 +10893,16 @@ document.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
       const sendBtn = document.querySelector("[data-action='world-comment-submit']");
+      if (sendBtn instanceof HTMLElement) sendBtn.click();
+    }
+    return;
+  }
+  if (target.getAttribute("data-field") === "world-reply-draft") {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const commentId = String(target.getAttribute("data-comment-id") || "").trim();
+      if (!commentId) return;
+      const sendBtn = document.querySelector(`[data-action='world-comment-reply-submit'][data-id='${commentId}']`);
       if (sendBtn instanceof HTMLElement) sendBtn.click();
     }
     return;

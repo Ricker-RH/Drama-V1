@@ -6,7 +6,8 @@ import {
   setWorldCardInteraction,
   listWorldCardComments,
   createWorldCardComment,
-  setWorldCardCommentLike
+  setWorldCardCommentLike,
+  deleteWorldCardComment
 } from "../repos/worldcard-repo.js";
 import { invalidateBootstrapCoreCache } from "./bootstrap.js";
 
@@ -35,12 +36,27 @@ export async function handleWorldCard(req, res, pathname) {
         id: row.id,
         worldCardId: row.world_card_id,
         userId: row.user_id,
+        parentCommentId: row.parent_comment_id || null,
         user: row.user_name || "玩家",
         text: row.content || "",
         likes: Number(row.likes_count || 0),
         likedByMe: Boolean(row.liked_by_me),
         createdAt: row.created_at,
-        time: toClock(row.created_at)
+        time: toClock(row.created_at),
+        replies: Array.isArray(row.replies)
+          ? row.replies.map((reply) => ({
+              id: reply.id,
+              worldCardId: reply.world_card_id,
+              userId: reply.user_id,
+              parentCommentId: reply.parent_comment_id || row.id,
+              user: reply.user_name || "玩家",
+              text: reply.content || "",
+              likes: Number(reply.likes_count || 0),
+              likedByMe: Boolean(reply.liked_by_me),
+              createdAt: reply.created_at,
+              time: toClock(reply.created_at)
+            }))
+          : []
       }))
     });
   }
@@ -65,6 +81,7 @@ export async function handleWorldCard(req, res, pathname) {
         id: result.comment.id,
         worldCardId: result.comment.world_card_id,
         userId: result.comment.user_id,
+        parentCommentId: result.comment.parent_comment_id || null,
         user: result.comment.user_name || "玩家",
         text: result.comment.content || "",
         likes: Number(result.comment.likes_count || 0),
@@ -98,6 +115,30 @@ export async function handleWorldCard(req, res, pathname) {
         likedByMe: Boolean(result.likedByMe)
       },
       active
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/worldcards/comments/delete") {
+    const body = await parseBody(req);
+    if (!body.commentId || !body.userId) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "commentId, userId are required" });
+    }
+    const result = await deleteWorldCardComment({
+      commentId: body.commentId,
+      userId: body.userId
+    });
+    if (!result || result.status === "not_found") {
+      return json(res, 404, { code: "COMMENT_NOT_FOUND", message: "comment not found" });
+    }
+    if (result.status === "forbidden") {
+      return json(res, 403, { code: "COMMENT_FORBIDDEN", message: "cannot delete others comment" });
+    }
+    return json(res, 200, {
+      commentId: body.commentId,
+      worldCardId: result.worldCardId,
+      commentsCount: Number(result.commentsCount || 0),
+      deletedCount: Number(result.deletedCount || 0),
+      topLevelDeleted: Number(result.topLevelDeleted || 0)
     });
   }
 

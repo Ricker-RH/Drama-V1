@@ -46,6 +46,7 @@ export async function handleMessages(req, res, pathname) {
       senderId: body.senderId,
       content: body.content,
       messageType: body.messageType || "text",
+      payload: body.payload || {},
       clientMessageId: body.clientMessageId || null
     });
     invalidateBootstrapCoreCache();

@@ -20,6 +20,7 @@ export async function sendConversationMessage({
   senderId,
   content,
   messageType = "text",
+  payload = {},
   clientMessageId = null
 }) {
   await assertConversationMember(conversationId, senderId);
@@ -28,10 +29,10 @@ export async function sendConversationMessage({
     `insert into messages(
        conversation_id, sender_id, message_type, content, payload, status, client_message_id
      ) values (
-       $1, $2, $3, $4, '{}'::jsonb, 'sent', $5
+       $1, $2, $3, $4, $5::jsonb, 'sent', $6
      )
-     returning id, conversation_id, sender_id, message_type, content, created_at`,
-    [conversationId, senderId, messageType, content, clientMessageId]
+     returning id, conversation_id, sender_id, message_type, content, payload, created_at`,
+    [conversationId, senderId, messageType, content, JSON.stringify(payload || {}), clientMessageId]
   );
   const message = inserted.rows[0] || null;
   if (!message) return null;
@@ -138,6 +139,7 @@ export async function listConversationMessages({
        m.sender_id,
        m.message_type,
        m.content,
+       m.payload,
        m.created_at,
        case
          when m.sender_id = $2 then coalesce((select last_read_at from peer) >= m.created_at, false)

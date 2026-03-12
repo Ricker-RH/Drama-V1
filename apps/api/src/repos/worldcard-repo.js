@@ -173,6 +173,39 @@ export async function listWorldCardComments(worldCardId, userId = "", limit = 10
     limit $2
   `;
   const res = await query(sql, params);
+  const parentRows = Array.isArray(res.rows) ? res.rows : [];
+  const parentIds = parentRows.map((row) => row.id).filter(Boolean);
+  let replyRows = [];
+  if (parentIds.length) {
+    const replyRes = await query(
+      `select
+         c.id,
+         c.world_card_id,
+         c.user_id,
+         c.parent_comment_id,
+         c.content,
+         c.likes_count,
+         c.created_at,
+         c.updated_at,
+         coalesce(u.nickname, '玩家') as user_name,
+         false as liked_by_me
+       from world_card_comments c
+       left join users u on u.id = c.user_id
+       where c.parent_comment_id = any($1::uuid[])
+         and c.deleted_at is null
+         and c.status = 'active'
+       order by c.created_at asc`,
+      [parentIds]
+    );
+    replyRows = Array.isArray(replyRes.rows) ? replyRes.rows : [];
+  }
+  const replyByParent = replyRows.reduce((acc, row) => {
+    const pid = String(row.parent_comment_id || "").trim();
+    if (!pid) return acc;
+    if (!acc[pid]) acc[pid] = [];
+    acc[pid].push(row);
+    return acc;
+  }, {});
   const countRes = await query(
     `select count(*)::int as total_count
      from world_card_comments
@@ -183,7 +216,10 @@ export async function listWorldCardComments(worldCardId, userId = "", limit = 10
     [worldCardId]
   );
   return {
-    comments: res.rows,
+    comments: parentRows.map((row) => ({
+      ...row,
+      replies: replyByParent[String(row.id || "")] || []
+    })),
     totalCount: Number(countRes.rows[0]?.total_count || 0)
   };
 }
@@ -234,10 +270,12 @@ export async function createWorldCardComment({
     );
 
     const countRes = await client.query(
-      `select comments_count
-       from world_card_stats
+      `select count(*)::int as total_count
+       from world_card_comments
        where world_card_id = $1
-       limit 1`,
+         and deleted_at is null
+         and status = 'active'
+         and parent_comment_id is null`,
       [worldCardId]
     );
 
@@ -261,7 +299,7 @@ export async function createWorldCardComment({
             liked_by_me: false
           }
         : null,
-      commentsCount: Number(countRes.rows[0]?.comments_count || 0)
+      commentsCount: Number(countRes.rows[0]?.total_count || 0)
     };
   } catch (err) {
     await client.query("rollback");
@@ -333,6 +371,108 @@ export async function setWorldCardCommentLike({
       worldCardId,
       likesCount: Number(row.likes_count || 0),
       likedByMe: Boolean(active)
+    };
+  } catch (err) {
+    await client.query("rollback");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteWorldCardComment({
+  commentId,
+  userId
+}) {
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+
+    const targetRes = await client.query(
+      `select id, world_card_id, user_id, parent_comment_id
+       from world_card_comments
+       where id = $1
+         and deleted_at is null
+         and status = 'active'
+       limit 1`,
+      [commentId]
+    );
+    const target = targetRes.rows[0];
+    if (!target?.id) {
+      await client.query("rollback");
+      return { status: "not_found" };
+    }
+    if (String(target.user_id || "") !== String(userId || "")) {
+      await client.query("rollback");
+      return { status: "forbidden" };
+    }
+
+    let deletedCount = 0;
+    let topLevelDeleted = 0;
+    if (target.parent_comment_id) {
+      const deleted = await client.query(
+        `update world_card_comments
+         set status = 'deleted',
+             deleted_at = now(),
+             updated_at = now()
+         where id = $1
+           and deleted_at is null
+           and status = 'active'
+         returning id, parent_comment_id`,
+        [commentId]
+      );
+      deletedCount = deleted.rowCount;
+      topLevelDeleted = 0;
+    } else {
+      const deleted = await client.query(
+        `update world_card_comments
+         set status = 'deleted',
+             deleted_at = now(),
+             updated_at = now()
+         where (id = $1 or parent_comment_id = $1)
+           and deleted_at is null
+           and status = 'active'
+         returning id, parent_comment_id`,
+        [commentId]
+      );
+      deletedCount = deleted.rowCount;
+      topLevelDeleted = deleted.rows.filter((row) => !row.parent_comment_id).length;
+    }
+
+    if (deletedCount > 0) {
+      await client.query(
+        `insert into world_card_stats(world_card_id)
+         values ($1)
+         on conflict (world_card_id) do nothing`,
+        [target.world_card_id]
+      );
+      await client.query(
+        `update world_card_stats
+         set comments_count = greatest(0, comments_count - $2),
+             updated_at = now()
+         where world_card_id = $1`,
+        [target.world_card_id, deletedCount]
+      );
+    }
+
+    const countRes = await client.query(
+      `select count(*)::int as total_count
+       from world_card_comments
+       where world_card_id = $1
+         and deleted_at is null
+         and status = 'active'
+         and parent_comment_id is null`,
+      [target.world_card_id]
+    );
+
+    await client.query("commit");
+    return {
+      status: "ok",
+      worldCardId: target.world_card_id,
+      deletedCount: Number(deletedCount || 0),
+      topLevelDeleted: Number(topLevelDeleted || 0),
+      commentsCount: Number(countRes.rows[0]?.total_count || 0)
     };
   } catch (err) {
     await client.query("rollback");

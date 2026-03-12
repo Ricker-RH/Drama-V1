@@ -649,7 +649,9 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
     const threadRes = await query(
       `select
         m.conversation_id,
+        m.message_type,
         m.content,
+        m.payload,
         m.created_at,
         case when m.sender_id = $1 then 'me' else 'other' end as from_role
       from messages m
@@ -661,7 +663,9 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       if (!messageThreads[row.conversation_id]) messageThreads[row.conversation_id] = [];
       messageThreads[row.conversation_id].push({
         from: row.from_role,
+        type: row.message_type || "text",
         text: row.content || "",
+        payload: row.payload || {},
         time: toClock(row.created_at)
       });
     });
