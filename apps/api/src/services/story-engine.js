@@ -495,6 +495,18 @@ function hasRepeatedOpeningTemplate(nowResult = "", prevResult = "", mode = "") 
   return false;
 }
 
+function parseStoryClueTerms(sessionMeta = {}) {
+  const storyContext = sessionMeta?.storyContext && typeof sessionMeta.storyContext === "object"
+    ? sessionMeta.storyContext
+    : {};
+  return String(storyContext.clues || "")
+    .split(/[，。；、,/\-|：:\s\[\]（）()·]+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .filter((x) => x.length >= 2 && x.length <= 16)
+    .slice(0, 10);
+}
+
 function pickInputAnchors(input = "", max = 4) {
   const src = String(input || "");
   const stop = new Set(["然后", "接着", "继续", "一下", "这个", "那个", "这里", "那里", "可以", "帮我", "我们"]);
@@ -508,8 +520,9 @@ function pickInputAnchors(input = "", max = 4) {
   return uniq.slice(0, max);
 }
 
-function buildOpeningGenerationGuard(input, sessionMeta = {}, detailMemory = []) {
+function buildOpeningGenerationGuard(input, sessionMeta = {}, turnIndex = 1) {
   const prevFirst = firstSentence(sessionMeta?.previousTurn?.narrative || "", 56);
+  const prevInput = String(sessionMeta?.previousTurn?.userInput || "");
   const bannedOpenings = [
     prevFirst,
     "清晨的阳光透过落地窗洒在办公室的每一个角落",
@@ -521,23 +534,33 @@ function buildOpeningGenerationGuard(input, sessionMeta = {}, detailMemory = [])
     .filter(Boolean)
     .slice(0, 6);
 
-  const anchorsFromInput = pickInputAnchors(input, 5);
-  const anchorsFromMemory = (Array.isArray(detailMemory) ? detailMemory : [])
-    .map((x) => String(x || "").trim())
-    .filter((x) => x.length >= 2 && x.length <= 10)
-    .slice(0, 4);
-  const requiredAnchorTokens = [...new Set([...anchorsFromInput, ...anchorsFromMemory])].slice(0, 6);
+  const anchorsFromInput = pickInputAnchors(input, 6);
+  const anchorsFromPrevInput = pickInputAnchors(prevInput, 3);
+  const requiredAnchorTokens = [...new Set([...anchorsFromInput, ...anchorsFromPrevInput])].slice(0, 6);
+  const clueTerms = parseStoryClueTerms(sessionMeta);
+  const activeClue = clueTerms.length ? clueTerms[(Math.max(1, turnIndex) - 1) % clueTerms.length] : "";
+  const prevResult = extractResultSection(sessionMeta?.previousTurn?.narrative || "") || String(sessionMeta?.previousTurn?.narrative || "");
+  const repeatedCluesInPrev = clueTerms.filter((c) => prevResult.includes(c)).slice(0, 4);
 
   const instructionLines = [
     "首句去模板化硬约束：",
     `- 首句禁止复用这些起手句（或其近义改写）：${bannedOpenings.join(" / ")}`,
     `- 首句必须命中本回合动作锚点至少1个：${requiredAnchorTokens.join(" / ")}`,
-    "- 首句优先从“动作/对话/冲突”起手，不要从天气、时间、氛围描写起手。"
+    "- 首句优先从“动作/对话/冲突”起手，不要从天气、时间、氛围描写起手。",
+    "线索推进硬约束：",
+    activeClue
+      ? `- 本回合优先推进线索“${activeClue}”，不要整段重复线索清单。`
+      : "- 本回合线索只允许轻量回指，重心放在动作后果与关系变化。",
+    repeatedCluesInPrev.length
+      ? `- 以下线索上回合已提及，本回合避免再次完整复述：${repeatedCluesInPrev.join(" / ")}`
+      : "- 若提及旧线索，最多点到1项并立即给出新变化。"
   ];
 
   return {
     bannedOpenings,
     requiredAnchorTokens,
+    activeClue,
+    repeatedCluesInPrev,
     instructionText: instructionLines.join("\n")
   };
 }
@@ -984,7 +1007,7 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
 
   const runtimeMode = normalizeMode(sessionMeta.mode || sessionMeta?.storyContext?.mode || "");
   const detailMemory = buildDetailMemory(sessionMeta);
-  const openingGuard = buildOpeningGenerationGuard(input, sessionMeta, detailMemory);
+  const openingGuard = buildOpeningGenerationGuard(input, sessionMeta, turnIndex);
 
   const userPayload = {
     session: {
@@ -1009,6 +1032,11 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
         avoid_templates: openingGuard.bannedOpenings,
         require_action_anchor_tokens: openingGuard.requiredAnchorTokens,
         instruction: "首句必须与本回合用户动作强绑定，不得复用上一回合或固定模板起手句。"
+      },
+      clue_progression: {
+        active_clue: openingGuard.activeClue || "",
+        avoid_full_recap_clues: openingGuard.repeatedCluesInPrev || [],
+        instruction: "线索按回合推进，禁止每回合复述整组线索；若回指旧线索，最多点到1项并给出新变化。"
       }
     },
     turn_index: turnIndex,
@@ -1157,7 +1185,7 @@ export async function runStoryTurnStream({ turnIndex, input, sessionMeta, onNarr
 
   const runtimeMode = normalizeMode(sessionMeta.mode || sessionMeta?.storyContext?.mode || "");
   const detailMemory = buildDetailMemory(sessionMeta);
-  const openingGuard = buildOpeningGenerationGuard(input, sessionMeta, detailMemory);
+  const openingGuard = buildOpeningGenerationGuard(input, sessionMeta, turnIndex);
   const userPayload = {
     session: {
       id: sessionMeta.id,
@@ -1181,6 +1209,11 @@ export async function runStoryTurnStream({ turnIndex, input, sessionMeta, onNarr
         avoid_templates: openingGuard.bannedOpenings,
         require_action_anchor_tokens: openingGuard.requiredAnchorTokens,
         instruction: "首句必须与本回合用户动作强绑定，不得复用上一回合或固定模板起手句。"
+      },
+      clue_progression: {
+        active_clue: openingGuard.activeClue || "",
+        avoid_full_recap_clues: openingGuard.repeatedCluesInPrev || [],
+        instruction: "线索按回合推进，禁止每回合复述整组线索；若回指旧线索，最多点到1项并给出新变化。"
       }
     },
     turn_index: turnIndex,
