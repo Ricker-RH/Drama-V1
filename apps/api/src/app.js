@@ -10,6 +10,7 @@ import { handleBootstrap } from "./routes/bootstrap.js";
 import { handlePosts } from "./routes/posts.js";
 import { handleMessages } from "./routes/messages.js";
 import { handleCreatorCards } from "./routes/creator-cards.js";
+import { handlePaint } from "./routes/paint.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -113,6 +114,11 @@ export async function handleHttp(req, res) {
       if (handled !== false) return;
     }
 
+    if (pathname.startsWith("/api/v1/paint")) {
+      const handled = await handlePaint(req, res, pathname);
+      if (handled !== false) return;
+    }
+
     if (pathname.startsWith("/api/v1/community")) {
       const handled = await handleCommunity(req, res, pathname);
       if (handled !== false) return;
@@ -145,4 +151,3 @@ export async function handleHttp(req, res) {
     });
   }
 }
-

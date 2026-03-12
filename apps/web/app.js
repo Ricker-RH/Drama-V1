@@ -9265,16 +9265,29 @@ document.addEventListener("click", (event) => {
         return;
       }
       uiState.workshopPaintGenerating = true;
-      uiState.workshopPaintFeedback = "已生成 4 张预览图，你可以继续修改提示词再试。";
-      uiState.workshopPaintResults = buildWorkshopPaintPreviewUrls({
+      uiState.workshopPaintFeedback = "正在通过 API 生成图片...";
+      uiState.workshopPaintComposerOpen = false;
+      render();
+      void generateWorkshopPaintWithApi({
         prompt,
         style: uiState.workshopPaintStyle,
         ratio: uiState.workshopPaintRatio,
-        negative: uiState.workshopPaintNegativePrompt
-      });
-      uiState.workshopPaintGenerating = false;
-      uiState.workshopPaintComposerOpen = false;
-      render();
+        negative: uiState.workshopPaintNegativePrompt,
+        count: 4
+      })
+        .then((images) => {
+          uiState.workshopPaintResults = images;
+          uiState.workshopPaintFeedback = images.length
+            ? `已生成 ${images.length} 张预览图，你可以继续修改提示词再试。`
+            : "未返回图片，请调整提示词后重试。";
+          uiState.workshopPaintGenerating = false;
+          render();
+        })
+        .catch((error) => {
+          uiState.workshopPaintGenerating = false;
+          uiState.workshopPaintFeedback = `生成失败：${error instanceof Error ? error.message : "unknown"}`;
+          render();
+        });
       return;
     }
     if (action === "workshop-paint-toggle-composer") {
