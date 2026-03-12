@@ -5023,8 +5023,8 @@ function pageCommunity() {
 
 function pageCommunityJoin() {
   return renderExploreShell(`
-    <section class="community-page">
-      <div class="search-result-top"><h3>加入社区</h3></div>
+    <section class="community-page community-join-page">
+      <h3 class="community-join-title">加入社区</h3>
       ${renderCommunityCards(COMMUNITY_LIST, "暂时没有可加入的社群")}
     </section>
   `);

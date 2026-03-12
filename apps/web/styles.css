@@ -3982,6 +3982,30 @@ code {
   align-items: center;
 }
 
+.community-home-top .community-head-row {
+  justify-content: center;
+}
+
+.community-home-top .community-head-row h2 {
+  text-align: center;
+}
+
+.community-search-wrap .xh-search {
+  height: 40px;
+  padding: 0 10px 0 14px;
+}
+
+.community-search-wrap .xh-search input {
+  height: 38px;
+  font-size: 14px;
+}
+
+.community-search-wrap .xh-search-submit {
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+}
+
 .community-search-portal-flat {
   display: flex;
   align-items: center;
@@ -4007,7 +4031,8 @@ code {
   border-radius: 999px;
   background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
   color: #fff;
-  padding: 9px 14px;
+  height: 40px;
+  padding: 0 14px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -4066,6 +4091,11 @@ code {
 
 .community-home-feed-tabs button {
   flex: 1;
+}
+
+.community-join-page .community-join-title {
+  margin: 0;
+  text-align: center;
 }
 
 .community-top-panel-plain {
@@ -9072,7 +9102,8 @@ code {
   }
 
   .community-plus-create-btn {
-    padding: 8px 10px;
+    height: 36px;
+    padding: 0 10px;
   }
 
   .community-plus-create-btn em {
