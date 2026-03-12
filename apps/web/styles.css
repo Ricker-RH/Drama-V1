@@ -8386,24 +8386,6 @@ code {
     border-color: rgba(124, 92, 255, 0.36);
   }
 
-  .xh-mobile-top-search-btn.plain-home {
-    width: auto;
-    height: auto;
-    border: none;
-    border-radius: 0;
-    background: transparent;
-    color: #6953c8;
-    padding: 0;
-    font-size: 30px;
-    box-shadow: none;
-  }
-
-  .xh-mobile-top-search-btn.plain-home.active {
-    background: transparent;
-    border-color: transparent;
-    color: #5b43c4;
-  }
-
   .xh-mobile-right {
     display: inline-flex;
     align-items: center;
@@ -8461,11 +8443,11 @@ code {
   }
 
   .xh-shell.mobile-top-visible.top-nav-linked {
-    padding-top: calc(42px + env(safe-area-inset-top));
+    padding-top: calc(64px + env(safe-area-inset-top));
   }
 
   .xh-shell.mobile-top-visible.top-nav-linked .backstage-hero {
-    margin-top: -1px;
+    margin-top: 0;
   }
 
   .layout.explore-mode .content {
