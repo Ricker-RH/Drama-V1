@@ -1961,10 +1961,7 @@ function ensureDynamicMeta(item) {
       commentsCount: Number(item.comments) || 0,
       commentsLoaded: false,
       commentsLoading: false,
-      comments: [
-        { user: "一锅炖不下", text: "这条思路我也试了，确实好用。", time: "3分钟前" },
-        { user: "导向风", text: "建议把第3回合的提示词也放出来。", time: "12分钟前" }
-      ]
+      comments: []
     };
   }
   return uiState.dynamicMeta[item.id];
