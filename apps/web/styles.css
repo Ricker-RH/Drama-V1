@@ -13619,6 +13619,21 @@ button {
 }
 
 @media (max-width: 900px) {
+  .login-page-shell {
+    padding: 0;
+    width: 100vw;
+    min-height: 100dvh;
+  }
+
+  .login-page-card {
+    width: 100vw;
+    min-height: 100dvh;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    padding: calc(env(safe-area-inset-top) + 14px) 14px calc(env(safe-area-inset-bottom) + 12px);
+  }
+
   :root {
     --fs-normal: 12px;
     --fs-medium: 15px;
