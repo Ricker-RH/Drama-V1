@@ -5566,13 +5566,39 @@ function renderThreadMessageBubble(message) {
   `;
 }
 
+function buildThreadMessagesHtml(activeId, chatMeta, myAvatarText) {
+  const messages = ensureMessageThread(activeId);
+  return messages
+    .map(
+      (m, idx) => `
+            ${
+              idx === 0 || messages[idx - 1].time !== m.time
+                ? `<div class="dm-time-sep dm-time-sep-dark">${m.time || ""}</div>`
+                : ""
+            }
+            <div class="dm-modern-row ${m.from === "me" ? "right" : "left"}">
+              ${m.from === "other" ? `<span class="dm-modern-avatar user-avatar-click">${chatMeta.name.slice(0, 1)}</span>` : ""}
+              <div class="dm-modern-bubble-wrap">
+                ${renderThreadMessageBubble(m)}
+                ${
+                  m.from === "me" && !messages.slice(idx + 1).some((x) => x.from === "me")
+                    ? `<div class="dm-read-flag">${m.read ? "已读" : "送达"}</div>`
+                    : ""
+                }
+              </div>
+              ${m.from === "me" ? `<button class="dm-modern-avatar self dm-self-avatar-btn" data-action="open-self-profile">${escapeHtml(myAvatarText)}</button>` : ""}
+            </div>
+          `
+    )
+    .join("");
+}
+
 function pageDirectMessage() {
   if (!uiState.isLoggedIn) {
     return renderMessageGuestState("登录后查看私信", "查看聊天记录、已读状态和快捷回复。");
   }
   const activeId = getActiveConversationId();
   const chatMeta = MESSAGE_INBOX.find((x) => x.id === activeId) || { id: "", name: "请选择会话", preview: "", type: "私聊", time: "刚刚", badge: 0 };
-  const messages = ensureMessageThread(activeId);
   const peerPresence = uiState.messagePeerPresence[activeId] || null;
   const onlineStatusText = formatPeerOnlineStatus(peerPresence);
   const myAvatarText = (uiState.profile?.name || "我").trim().slice(0, 1) || "我";
@@ -5605,29 +5631,7 @@ function pageDirectMessage() {
           </div>
         </div>
         <div class="dm-modern-messages dm-modern-messages-dark">
-          ${messages
-            .map(
-              (m, idx) => `
-            ${
-              idx === 0 || messages[idx - 1].time !== m.time
-                ? `<div class="dm-time-sep dm-time-sep-dark">${m.time || ""}</div>`
-                : ""
-            }
-            <div class="dm-modern-row ${m.from === "me" ? "right" : "left"}">
-              ${m.from === "other" ? `<span class="dm-modern-avatar user-avatar-click">${chatMeta.name.slice(0, 1)}</span>` : ""}
-              <div class="dm-modern-bubble-wrap">
-                ${renderThreadMessageBubble(m)}
-                ${
-                  m.from === "me" && !messages.slice(idx + 1).some((x) => x.from === "me")
-                    ? `<div class="dm-read-flag">${m.read ? "已读" : "送达"}</div>`
-                    : ""
-                }
-              </div>
-              ${m.from === "me" ? `<button class="dm-modern-avatar self dm-self-avatar-btn" data-action="open-self-profile">${escapeHtml(myAvatarText)}</button>` : ""}
-            </div>
-          `
-            )
-            .join("")}
+          ${buildThreadMessagesHtml(activeId, chatMeta, myAvatarText)}
         </div>
         <div class="dm-modern-input-wrap dm-modern-input-wrap-dark">
           <button class="dm-plus-btn" data-action="toggle-message-thread-tools">＋</button>
@@ -8830,6 +8834,7 @@ function isMessageThreadDraftFocused() {
 function triggerMessageRealtimeRender(options = {}) {
   const { scrollToBottom = false } = options;
   if (isMessageThreadDraftFocused()) {
+    if (patchActiveThreadDomWhileTyping({ scrollToBottom })) return;
     messageRealtimePendingRenderWhileTyping = true;
     if (scrollToBottom) messageRealtimePendingScrollWhileTyping = true;
     return;
@@ -8866,6 +8871,30 @@ function scrollThreadToBottom(retry = 0) {
     }, 40);
   });
 }
+
+function patchActiveThreadDomWhileTyping(options = {}) {
+  const { scrollToBottom = false } = options;
+  if (!isMessageThreadDraftFocused()) return false;
+  const activeId = getActiveConversationId();
+  if (!activeId) return false;
+  const wrap = document.querySelector(".dm-modern-messages");
+  if (!(wrap instanceof HTMLElement)) return false;
+  const chatMeta = MESSAGE_INBOX.find((x) => x.id === activeId) || { name: "会话", type: "私聊" };
+  const myAvatarText = (uiState.profile?.name || "我").trim().slice(0, 1) || "我";
+  const nextHtml = buildThreadMessagesHtml(activeId, chatMeta, myAvatarText);
+  if (wrap.innerHTML !== nextHtml) {
+    wrap.innerHTML = nextHtml;
+  }
+  if (chatMeta.type === "私聊") {
+    const statusNode = document.querySelector(".dm-user h3 + p");
+    if (statusNode instanceof HTMLElement) {
+      statusNode.textContent = formatPeerOnlineStatus(uiState.messagePeerPresence[activeId] || null);
+    }
+  }
+  if (scrollToBottom) scrollThreadToBottom();
+  return true;
+}
+
 function ensureMessageRealtimeSync() {
   const canSync = uiState.isLoggedIn && Boolean(uiState.currentUserId);
   if (!canSync) {
