@@ -4950,25 +4950,41 @@ function pageWorkshop() {
   `);
 }
 
+function renderCommunityHero(activeTab = "home") {
+  return `
+    <header class="backstage-hero community-backstage-hero">
+      <div class="backstage-profile-row">
+        <button class="backstage-avatar community-hero-icon" data-go="#/community/home">社</button>
+        <div class="backstage-profile-meta">
+          <h2>社区广场</h2>
+          <p>找同好、聊剧情、组局共创</p>
+          <small>实时更新高活跃社群与热门讨论</small>
+        </div>
+      </div>
+      <div class="backstage-shortcuts community-shortcuts">
+        <button data-action="toggle-community-filter"><span>⚲</span><em>筛选</em></button>
+        <button data-go="#/community/search"><span>⌕</span><em>搜索</em></button>
+        <button data-go="#/community/create"><span>＋</span><em>创建</em></button>
+        <button data-go="#/community/mine"><span>◎</span><em>我的社群</em></button>
+      </div>
+      <button class="backstage-composer-trigger" data-go="#/community/search">
+        <span>搜索社群 / 主题 / 设定 / 作者</span>
+        <em>⌕</em>
+      </button>
+    </header>
+    <div class="dynamic-tabs community-home-tabs">
+      <button class="${activeTab === "home" ? "active" : ""}" data-go="#/community/home">推荐</button>
+      <button class="${activeTab === "mine" ? "active" : ""}" data-go="#/community/mine">我的社群</button>
+      <button data-go="#/community/create">创建</button>
+    </div>
+  `;
+}
+
 function pageCommunity() {
-  const showInlineCommunitySearchPanel = uiState.communitySearchPanelOpen && !isMobileViewport();
   const filteredList = getFilteredCommunityList();
   return renderExploreShell(`
     <section class="community-page">
-      <div class="community-top-panel community-top-panel-plain">
-        <div class="community-head-row community-head-row-plain">
-          <h2>社区</h2>
-          <button class="community-search-icon-btn" data-go="#/community/search" aria-label="搜索社区">⌕</button>
-        </div>
-        <div class="community-head-actions plain">
-          <div class="community-top-switch">
-            <button class="active" data-go="#/community/home">推荐</button>
-            <button data-go="#/community/mine">我的社群</button>
-          </div>
-          <button class="community-create-btn" data-go="#/community/create">创建</button>
-        </div>
-        ${showInlineCommunitySearchPanel ? `<div class="community-search-float">${renderSearchPanel("community")}</div>` : ""}
-      </div>
+      ${renderCommunityHero("home")}
       <div class="xh-filter-panel expanded drama-filter-panel community-filter-drama">
         <div class="xh-filter-body">
           ${COMMUNITY_FILTER_CONFIG.map((group) => renderCommunityFilterGroup(group)).join("")}
@@ -4986,13 +5002,8 @@ function pageCommunityMine() {
   const manageTarget = isJoinedTab ? "#/community/manage/joined" : "#/community/manage";
   return renderExploreShell(`
     <section class="community-page">
-      <div class="community-head-row">
-        <div class="community-top-switch">
-          <button data-go="#/community/home">社区</button>
-          <button class="active" data-go="#/community/mine">我的社群</button>
-        </div>
-        <div class="community-head-actions"><button data-go="${manageTarget}">管理</button></div>
-      </div>
+      ${renderCommunityHero("mine")}
+      <div class="community-head-actions"><button data-go="${manageTarget}">管理</button></div>
       <div class="community-tab-switch">
         <button class="${uiState.communityMyTab === "joined" ? "active" : ""}" data-action="community-my-tab" data-tab="joined">我加入</button>
         <button class="${uiState.communityMyTab === "created" ? "active" : ""}" data-action="community-my-tab" data-tab="created">我创建</button>
