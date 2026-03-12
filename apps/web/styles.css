@@ -797,7 +797,7 @@ code {
   color: #6b7280;
   width: 40px;
   height: 40px;
-  font-size: 19px;
+  font-size: 22px !important;
   line-height: 1;
   display: grid;
   place-items: center;
@@ -4003,7 +4003,7 @@ code {
 .community-search-wrap .xh-search-submit {
   width: 32px;
   height: 32px;
-  font-size: 16px;
+  font-size: 20px !important;
 }
 
 .community-search-portal-flat {
@@ -4181,7 +4181,7 @@ code {
   border-radius: 0;
   background: transparent;
   color: #6d28d9;
-  font-size: 30px;
+  font-size: 34px !important;
   font-weight: 800;
   line-height: 1;
   padding: 0;
@@ -8538,7 +8538,7 @@ code {
     border: none;
     background: transparent;
     color: #6953c8;
-    font-size: 30px;
+    font-size: 24px !important;
     font-weight: 800;
     line-height: 1;
     cursor: pointer;
@@ -8553,6 +8553,10 @@ code {
     background: transparent;
     border-color: transparent;
     color: #5b43c4;
+  }
+
+  .msg-head-actions > button[aria-label="搜索"] {
+    font-size: 24px !important;
   }
 
   .xh-mobile-right {
