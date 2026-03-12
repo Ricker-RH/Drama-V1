@@ -375,6 +375,7 @@ const uiState = {
   messageThreadDraft: "",
   messageThreadToolsOpen: false,
   messageThreadMenuOpen: false,
+  messageThreadAutoScrollOnEnter: false,
   messageFeedback: "",
   messageFollowActions: {},
   messageCommentLikes: {},
@@ -382,6 +383,7 @@ const uiState = {
   messageReplyDraft: "",
   messageReadAckConversationId: "",
   messagePeerPresence: {},
+  messagePresenceBeatAt: {},
   messageThreads: {},
   communityMyTab: "joined",
   communityGroupTab: "dynamic",
@@ -3637,11 +3639,11 @@ function markMessageRead(messageId) {
   item.badge = 0;
 }
 
-function updateMessageInboxPreview(messageId, preview) {
+function updateMessageInboxPreview(messageId, preview, options = {}) {
   const item = getMessageInboxItem(messageId);
   if (!item) return;
   item.preview = preview;
-  item.time = nowClockText();
+  item.time = String(options.time || "").trim() || nowClockText();
   moveMessageToTop(messageId);
 }
 
@@ -3663,7 +3665,7 @@ function messageInboxChanged(prev = [], next = []) {
 
 async function syncMessageInbox() {
   if (!uiState.isLoggedIn || !uiState.currentUserId) return false;
-  const data = await apiGetJson(`/messages/inbox?userId=${encodeURIComponent(uiState.currentUserId)}&limit=80`);
+  const data = await apiGetJson(`/messages/inbox?userId=${encodeURIComponent(uiState.currentUserId)}&limit=80&_ts=${Date.now()}`);
   const next = Array.isArray(data?.inbox) ? data.inbox : [];
   if (!messageInboxChanged(MESSAGE_INBOX, next)) return false;
   replaceArray(MESSAGE_INBOX, next);
@@ -3679,15 +3681,17 @@ function pushThreadMessage(messageId, text, from = "me", extra = {}) {
   const messages = ensureMessageThread(messageId);
   const messageType = String(extra.type || "text");
   const payload = extra.payload && typeof extra.payload === "object" ? extra.payload : {};
-  messages.push({ from, type: messageType, payload, text, time: "刚刚", read: from !== "me" });
+  const createdAt = String(extra.createdAt || extra.created_at || "").trim();
+  const resolvedTime = createdAt ? formatThreadClock(createdAt) : nowClockText();
+  messages.push({ from, type: messageType, payload, text, time: resolvedTime, read: from !== "me" });
   if (from === "me") {
-    updateMessageInboxPreview(messageId, text);
+    updateMessageInboxPreview(messageId, text, { time: resolvedTime });
     markMessageRead(messageId);
   } else {
     const item = getMessageInboxItem(messageId);
     if (!item) return;
     item.preview = text;
-    item.time = nowClockText();
+    item.time = resolvedTime;
     item.badge = (Number(item.badge) || 0) + 1;
     moveMessageToTop(messageId);
   }
@@ -3705,7 +3709,8 @@ async function fetchThreadMessages(conversationId, userId, limit = 120) {
   const query = new URLSearchParams({
     conversationId: String(conversationId || "").trim(),
     userId: String(userId || "").trim(),
-    limit: String(limit)
+    limit: String(limit),
+    _ts: String(Date.now())
   });
   const data = await apiGetJson(`/messages/thread?${query.toString()}`);
   return {
@@ -3762,6 +3767,16 @@ async function markConversationReadOnServer(conversationId) {
     conversationId,
     userId: uiState.currentUserId
   });
+}
+
+function shouldHeartbeatPresence(conversationId) {
+  const key = String(conversationId || "").trim();
+  if (!key) return false;
+  const now = Date.now();
+  const last = Number(uiState.messagePresenceBeatAt[key] || 0);
+  if (now - last < 4000) return false;
+  uiState.messagePresenceBeatAt[key] = now;
+  return true;
 }
 
 async function syncActiveConversationThread() {
@@ -4094,7 +4109,12 @@ async function apiJson(path, payload, method = "POST", fetchOptions = {}) {
 async function apiGetJson(path) {
   let resp;
   try {
-    resp = await fetch(`${API_BASE}${path}`);
+    resp = await fetch(`${API_BASE}${path}`, {
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache"
+      }
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error || "");
     if (/Failed to fetch|NetworkError|fetch/i.test(msg)) {
@@ -6022,47 +6042,16 @@ async function generateWorkshopPaintWithApi({
   negative = "",
   count = 4
 }) {
-  try {
-    const data = await apiJson("/paint/generate", {
-      prompt,
-      style,
-      ratio,
-      negative,
-      count
-    });
-    const images = Array.isArray(data?.images) ? data.images : [];
-    if (images.length) {
-      return {
-        images,
-        warnings: Array.isArray(data?.warnings) ? data.warnings : [],
-        fallbackUsed: false
-      };
-    }
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "unknown";
-    const preview = buildWorkshopPaintPreviewUrls({
-      prompt,
-      style,
-      ratio,
-      negative
-    }).slice(0, Math.max(1, Math.min(4, Number(count) || 4)));
-    return {
-      images: preview,
-      warnings: [msg],
-      fallbackUsed: true
-    };
-  }
-
-  const preview = buildWorkshopPaintPreviewUrls({
+  const data = await apiJson("/paint/generate", {
     prompt,
     style,
     ratio,
-    negative
-  }).slice(0, Math.max(1, Math.min(4, Number(count) || 4)));
+    negative,
+    count
+  });
   return {
-    images: preview,
-    warnings: ["empty_response"],
-    fallbackUsed: true
+    images: Array.isArray(data?.images) ? data.images : [],
+    warnings: Array.isArray(data?.warnings) ? data.warnings : []
   };
 }
 
@@ -8378,6 +8367,10 @@ function render() {
   ensureCarouselTimer();
   ensureDramaHeroTimer();
   ensureMessageRealtimeSync();
+  if (current.startsWith("#/messages/thread") && uiState.messageThreadAutoScrollOnEnter) {
+    scrollThreadToBottom();
+    uiState.messageThreadAutoScrollOnEnter = false;
+  }
   focusSearchInputIfNeeded();
   if (preserveWorldInput) {
     requestAnimationFrame(() => {
@@ -8480,6 +8473,17 @@ function ensureDramaHeroTimer() {
 
 let messageRealtimeTimer;
 let messageRealtimeSyncing = false;
+let messageRealtimeSyncRunner = null;
+function scrollThreadToBottom() {
+  requestAnimationFrame(() => {
+    const wrap = document.querySelector(".dm-modern-messages");
+    if (!(wrap instanceof HTMLElement)) return;
+    wrap.scrollTop = wrap.scrollHeight;
+    setTimeout(() => {
+      wrap.scrollTop = wrap.scrollHeight;
+    }, 40);
+  });
+}
 function ensureMessageRealtimeSync() {
   const currentHash = window.location.hash || "";
   const onMessageRoute = currentHash.startsWith("#/messages") && !currentHash.startsWith("#/messages/story");
@@ -8502,20 +8506,19 @@ function ensureMessageRealtimeSync() {
       })
       .then(({ inboxChanged = false, threadChanged = false } = {}) => {
         const activeId = getActiveConversationId();
-        if (liveOnThreadPage && activeId && uiState.messageReadAckConversationId !== activeId) {
+        if (liveOnThreadPage && activeId && shouldHeartbeatPresence(activeId)) {
           void markConversationReadOnServer(activeId)
             .then(() => {
               uiState.messageReadAckConversationId = activeId;
             })
-            .catch(() => {});
+            .catch(() => {
+              uiState.messagePresenceBeatAt[activeId] = 0;
+            });
         }
         if (inboxChanged || threadChanged) {
           render();
           if (threadChanged) {
-            requestAnimationFrame(() => {
-              const wrap = document.querySelector(".dm-modern-messages");
-              if (wrap) wrap.scrollTop = wrap.scrollHeight;
-            });
+            scrollThreadToBottom();
           }
         }
       })
@@ -8524,9 +8527,10 @@ function ensureMessageRealtimeSync() {
         messageRealtimeSyncing = false;
       });
   };
+  messageRealtimeSyncRunner = runSync;
   runSync();
   if (!messageRealtimeTimer) {
-    messageRealtimeTimer = setInterval(runSync, 2000);
+    messageRealtimeTimer = setInterval(runSync, 1000);
   }
 }
 
@@ -8670,8 +8674,12 @@ document.addEventListener("click", (event) => {
         .then((conversationId) => {
           if (!conversationId) return;
           return sendMessageToThread(conversationId, "谢谢你的点赞和收藏，真的很有动力！")
-            .then(() => {
-              pushThreadMessage(conversationId, "谢谢你的点赞和收藏，真的很有动力！", "me");
+            .then((message) => {
+              pushThreadMessage(conversationId, "谢谢你的点赞和收藏，真的很有动力！", "me", {
+                type: String(message?.message_type || "text"),
+                payload: message?.payload && typeof message.payload === "object" ? message.payload : {},
+                createdAt: String(message?.created_at || message?.createdAt || "")
+              });
               render();
             });
         })
@@ -8961,6 +8969,7 @@ document.addEventListener("click", (event) => {
         }
         uiState.selectedMessageId = id;
         uiState.messageReadAckConversationId = "";
+        uiState.messageThreadAutoScrollOnEnter = true;
         markMessageRead(id);
         moveMessageToTop(id);
       }
@@ -9026,7 +9035,8 @@ document.addEventListener("click", (event) => {
         .then((message) => {
           pushThreadMessage(activeId, text, "me", {
             type: String(message?.message_type || "text"),
-            payload: message?.payload && typeof message.payload === "object" ? message.payload : {}
+            payload: message?.payload && typeof message.payload === "object" ? message.payload : {},
+            createdAt: String(message?.created_at || message?.createdAt || "")
           });
           uiState.messageReadAckConversationId = "";
           render();
@@ -9348,12 +9358,10 @@ document.addEventListener("click", (event) => {
         negative: uiState.workshopPaintNegativePrompt,
         count: 4
       })
-        .then(({ images, warnings, fallbackUsed }) => {
+        .then(({ images, warnings }) => {
           uiState.workshopPaintResults = images;
           if (!images.length) {
             uiState.workshopPaintFeedback = "未返回图片，请调整提示词后重试。";
-          } else if (fallbackUsed) {
-            uiState.workshopPaintFeedback = `已生成 ${images.length} 张预览图。`;
           } else {
             uiState.workshopPaintFeedback = `已生成 ${images.length} 张预览图${Array.isArray(warnings) && warnings.length ? `（${warnings.length} 张失败）` : ""}，你可以继续修改提示词再试。`;
           }
@@ -9362,18 +9370,7 @@ document.addEventListener("click", (event) => {
         })
         .catch((error) => {
           uiState.workshopPaintGenerating = false;
-          const fallback = buildWorkshopPaintPreviewUrls({
-            prompt,
-            style: uiState.workshopPaintStyle,
-            ratio: uiState.workshopPaintRatio,
-            negative: uiState.workshopPaintNegativePrompt
-          }).slice(0, 4);
-          if (fallback.length) {
-            uiState.workshopPaintResults = fallback;
-            uiState.workshopPaintFeedback = `已生成 ${fallback.length} 张预览图。`;
-          } else {
-            uiState.workshopPaintFeedback = `生成失败：${error instanceof Error ? error.message : "unknown"}`;
-          }
+          uiState.workshopPaintFeedback = `生成失败：${error instanceof Error ? error.message : "unknown"}`;
           render();
         });
       return;
@@ -11380,14 +11377,28 @@ function scrollCurrentViewToTop() {
   window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   document.documentElement.scrollTop = 0;
   document.body.scrollTop = 0;
-  document.querySelectorAll(".xh-main, .xh-main-message, .dm-modern-messages, .me-side-sheet-inner").forEach((node) => {
+  document.querySelectorAll(".xh-main, .xh-main-message, .me-side-sheet-inner").forEach((node) => {
     if (node instanceof HTMLElement) node.scrollTop = 0;
   });
 }
 
 window.addEventListener("hashchange", () => {
   render();
+  const hash = window.location.hash || "";
+  if (hash.startsWith("#/messages/thread")) {
+    scrollThreadToBottom();
+    return;
+  }
   requestAnimationFrame(scrollCurrentViewToTop);
+});
+
+window.addEventListener("focus", () => {
+  if (typeof messageRealtimeSyncRunner === "function") messageRealtimeSyncRunner();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (typeof messageRealtimeSyncRunner === "function") messageRealtimeSyncRunner();
 });
 
 async function startApp() {
