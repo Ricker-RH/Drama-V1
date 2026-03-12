@@ -1154,12 +1154,12 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
   const isMobileMeActive = currentHash === "#/me/home" || currentHash.startsWith("#/me/");
   const isMobileWorkshopActive = currentHash.startsWith("#/workshop");
   const isTopNavLinkedRoute = isBackstageRoute || currentHash === "#/theater/home" || currentHash === "#/theater";
-  const showMobileTopBar = (
+  const isDynamicDetailRoute = currentHash === "#/messages/detail" || currentHash === "#/community/post/detail";
+  const showMobileTopBar = !isDynamicDetailRoute && (
     currentHash === "#/theater/home" ||
     currentHash === "#/theater" ||
     currentHash.startsWith("#/drama") ||
-    (isBackstageRoute && currentHash !== "#/messages/story/publish") ||
-    currentHash === "#/messages/detail"
+    (isBackstageRoute && currentHash !== "#/messages/story/publish")
   );
   const mobileTopTabs = [
     { label: "推荐", path: "#/theater/home", match: (hash) => hash.startsWith("#/theater") || hash.startsWith("#/world") || hash.startsWith("#/author") || hash.startsWith("#/search") },
