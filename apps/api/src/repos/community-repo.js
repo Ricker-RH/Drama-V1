@@ -72,6 +72,75 @@ export async function listCommunities(limit = 100) {
   return result.rows;
 }
 
+export async function joinCommunity({ communityId, userId }) {
+  const result = await query(
+    `with target as (
+      select id, owner_id, join_mode
+      from communities
+      where id = $1::uuid
+        and status = 'active'
+      limit 1
+    ),
+    guard as (
+      select
+        id,
+        owner_id,
+        join_mode,
+        case
+          when join_mode = 'invite_only' then false
+          else true
+        end as can_join
+      from target
+    ),
+    upsert_member as (
+      insert into community_members(community_id, user_id, role, status, joined_at, updated_at)
+      select
+        g.id,
+        $2::uuid,
+        case when $2::uuid = g.owner_id then 'owner' else 'member' end,
+        'active',
+        now(),
+        now()
+      from guard g
+      where g.can_join
+      on conflict (community_id, user_id)
+      do update set
+        status = 'active',
+        updated_at = now()
+      returning community_id
+    ),
+    sync_count as (
+      update communities c
+      set member_count = (
+            select count(*)
+            from community_members cm
+            where cm.community_id = c.id
+              and cm.status = 'active'
+          ),
+          last_active_at = now(),
+          updated_at = now()
+      where c.id = (select id from target)
+      returning c.id, c.member_count
+    )
+    select
+      g.id,
+      g.join_mode,
+      g.can_join,
+      s.member_count,
+      exists(
+        select 1
+        from community_members cm
+        where cm.community_id = g.id
+          and cm.user_id = $2::uuid
+          and cm.status = 'active'
+      ) as joined
+    from guard g
+    left join sync_count s on s.id = g.id`,
+    [communityId, userId]
+  );
+  return result.rows[0] || null;
+}
+
 export async function listPosts() {
   const result = await query(
     `select id, author_id, content, likes_count, created_at

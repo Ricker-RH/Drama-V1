@@ -1,6 +1,7 @@
 import { json, parseBody } from "../core/http.js";
 import {
   createCommunity,
+  joinCommunity,
   createPost,
   listCommunities,
   listPosts
@@ -54,6 +55,31 @@ export async function handleCommunity(req, res, pathname) {
     const limit = Number(req.url?.includes("?") ? new URL(req.url, "http://127.0.0.1").searchParams.get("limit") : "") || 100;
     const communities = await listCommunities(limit);
     return json(res, 200, { communities });
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/community/communities/join") {
+    const body = await parseBody(req);
+    const communityId = String(body.communityId || "").trim();
+    const userId = String(body.userId || "").trim();
+    if (!communityId || !userId) {
+      return json(res, 400, {
+        code: "INVALID_INPUT",
+        message: "communityId and userId are required"
+      });
+    }
+    const joined = await joinCommunity({ communityId, userId });
+    if (!joined?.id) {
+      return json(res, 404, { code: "COMMUNITY_NOT_FOUND", message: "community not found" });
+    }
+    if (!joined.can_join) {
+      return json(res, 403, { code: "JOIN_NOT_ALLOWED", message: "当前社群仅限邀请加入" });
+    }
+    invalidateBootstrapCoreCache();
+    return json(res, 200, {
+      communityId: joined.id,
+      joined: Boolean(joined.joined),
+      memberCount: Number(joined.member_count || 0)
+    });
   }
 
   if (req.method === "POST" && pathname === "/api/v1/community/posts") {
