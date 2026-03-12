@@ -1646,8 +1646,70 @@ function renderSearchResultSection() {
 function renderExploreLoginModal(options = {}) {
   const standalone = Boolean(options?.standalone);
   const rawMethod = uiState.loginMethod || "phone";
-  const method = rawMethod === "account" ? "account" : "phone";
+  const method = ["phone", "account", "wechat", "google"].includes(rawMethod) ? rawMethod : "phone";
   const accountAuthMode = uiState.accountAuthMode || "login";
+  if (standalone) {
+    return `
+      <div class="login-page-shell">
+        <div class="login-page-bg"></div>
+        <section class="login-page-card">
+          <div class="login-page-brand">
+            <img src="/assets/logo-v3.png" alt="爪马 Logo" loading="eager" fetchpriority="high" />
+            <h1>爪马 Drama</h1>
+            <p>沉浸式剧情社区，探索、创作、开刷一次完成。</p>
+          </div>
+
+          <div class="login-page-methods">
+            <button class="login-provider-btn ${method === "phone" ? "active" : ""}" data-action="set-login-method" data-method="phone">手机号登录</button>
+            <button class="login-provider-btn ${method === "wechat" ? "active" : ""}" data-action="set-login-method" data-method="wechat">微信号登录</button>
+            <button class="login-provider-btn ${method === "google" ? "active" : ""}" data-action="set-login-method" data-method="google">Google 登录</button>
+            <button class="login-provider-btn ${method === "account" ? "active" : ""}" data-action="set-login-method" data-method="account">账号密码登录</button>
+          </div>
+
+          ${
+            method === "account"
+              ? `
+            ${
+              accountAuthMode === "login"
+                ? `
+              <div class="login-field-row"><input data-field="login-account" value="${escapeHtml(uiState.loginAccount)}" placeholder="邮箱或昵称" /></div>
+              <div class="login-field-row"><input data-field="login-password" value="${escapeHtml(uiState.loginPassword)}" placeholder="密码" type="password" /></div>
+              <button class="login-submit" data-action="confirm-login" ${uiState.loginLoading ? "disabled" : ""}>${uiState.loginLoading ? "登录中..." : "账号登录"}</button>
+            `
+                : `
+              <div class="login-field-row"><input data-field="register-account" value="${escapeHtml(uiState.registerAccount)}" placeholder="设置账号（邮箱或昵称）" /></div>
+              <div class="login-field-row"><input data-field="register-password" value="${escapeHtml(uiState.registerPassword)}" placeholder="设置密码（至少6位）" type="password" /></div>
+              <div class="login-field-row"><input data-field="register-confirm-password" value="${escapeHtml(uiState.registerConfirmPassword)}" placeholder="重新输入密码" type="password" /></div>
+              <button class="login-submit" data-action="confirm-login" ${uiState.loginLoading ? "disabled" : ""}>${uiState.loginLoading ? "注册中..." : "立即注册"}</button>
+            `
+            }
+            <div class="login-agree-row">
+              <label class="login-agree"><input type="checkbox" checked /><span>已阅读并同意《用户协议》《隐私政策》</span></label>
+              <button class="login-switch-link" data-action="toggle-account-auth-mode">${
+                accountAuthMode === "login" ? "还没有账号？马上注册" : "已有账号？去登录"
+              }</button>
+            </div>
+          `
+              : method === "phone"
+                ? `
+            <div class="login-field-row"><span>+86</span><input data-field="login-phone" value="${escapeHtml(uiState.loginPhone)}" placeholder="输入手机号" /></div>
+            <div class="login-field-row"><input data-field="login-code" value="${escapeHtml(uiState.loginCode)}" placeholder="输入验证码" /><button type="button">获取验证码</button></div>
+            <button class="login-submit" data-action="confirm-login">验证码登录</button>
+          `
+                : `
+            <button class="login-submit" data-action="login-quick-provider" data-provider="${method}">
+              ${method === "wechat" ? "继续使用微信号登录" : "继续使用 Google 登录"}
+            </button>
+          `
+          }
+
+          ${uiState.loginError ? `<p class="login-error">${escapeHtml(uiState.loginError)}</p>` : ""}
+          ${method !== "account" ? `<label class="login-agree"><input type="checkbox" checked /><span>已阅读并同意《用户协议》《隐私政策》</span></label>` : ""}
+          <p class="login-note">新用户可直接登录 · 登录有效期 30 分钟</p>
+        </section>
+      </div>
+    `;
+  }
   return `
     <div class="login-overlay${standalone ? " login-overlay-standalone" : ""}">
       <div class="login-modal">
@@ -8651,7 +8713,6 @@ let messageRealtimeSyncRunner = null;
 let messageRealtimeEventSource = null;
 let messageRealtimeConnectedUserId = "";
 let messageRealtimeReconnectTimer = null;
-let mobileViewportBaseline = 0;
 
 function scrollThreadToBottom(retry = 0) {
   requestAnimationFrame(() => {
@@ -11238,13 +11299,30 @@ document.addEventListener("click", (event) => {
 
     if (action === "set-login-method") {
       const method = actionTarget.getAttribute("data-method");
-      if (method === "phone" || method === "account") {
+      if (method === "phone" || method === "account" || method === "wechat" || method === "google") {
         uiState.loginMethod = method;
-        if (method !== "account") uiState.accountAuthMode = "login";
+        uiState.accountAuthMode = "login";
         uiState.loginLoading = false;
         uiState.loginError = "";
         render();
       }
+      return;
+    }
+
+    if (action === "toggle-account-auth-mode") {
+      uiState.accountAuthMode = uiState.accountAuthMode === "register" ? "login" : "register";
+      uiState.loginError = "";
+      uiState.loginLoading = false;
+      render();
+      return;
+    }
+
+    if (action === "login-quick-provider") {
+      const provider = String(actionTarget.getAttribute("data-provider") || "").trim();
+      uiState.loginError = provider === "wechat"
+        ? "微信号登录暂未接入，请先使用账号密码登录"
+        : "Google 登录暂未接入，请先使用账号密码登录";
+      render();
       return;
     }
 
@@ -11266,6 +11344,18 @@ document.addEventListener("click", (event) => {
         } else {
           void loginWithAccountAndSync();
         }
+        return;
+      }
+      if (uiState.loginMethod === "wechat") {
+        uiState.loginError = "微信号登录暂未接入，请先使用账号密码登录";
+        uiState.loginLoading = false;
+        render();
+        return;
+      }
+      if (uiState.loginMethod === "google") {
+        uiState.loginError = "Google 登录暂未接入，请先使用账号密码登录";
+        uiState.loginLoading = false;
+        render();
         return;
       }
       uiState.loginError = "手机号登录暂未接入，请先使用账号密码登录";
@@ -11692,46 +11782,20 @@ function syncMobileViewportForThread() {
   const innerHeightPx = window.innerHeight || document.documentElement.clientHeight || 0;
   const vv = window.visualViewport;
   const visualHeightPx = vv?.height || innerHeightPx;
-  const visualTopPx = vv?.offsetTop || 0;
   const routePath = getCurrentRoutePath();
   const onThread = routePath.startsWith("#/messages/thread");
-
-  const baselineCandidate = Math.max(
-    mobileViewportBaseline || 0,
-    innerHeightPx,
-    document.documentElement.clientHeight || 0,
-    Math.round(visualHeightPx + visualTopPx)
-  );
-  mobileViewportBaseline = baselineCandidate;
-
-  let keyboardOffset = Math.max(0, mobileViewportBaseline - visualHeightPx - visualTopPx);
-  if (keyboardOffset < 20) keyboardOffset = 0;
-
   root.style.setProperty("--app-inner-height", `${Math.round(innerHeightPx)}px`);
   root.style.setProperty("--app-visual-height", `${Math.round(visualHeightPx)}px`);
-  root.style.setProperty("--keyboard-offset", `${Math.round(keyboardOffset)}px`);
-
-  document.body.classList.toggle("thread-keyboard-open", onThread && keyboardOffset > 24);
-}
-
-function ensureThreadInputVisible(target) {
-  if (!(target instanceof HTMLElement)) return;
-  if (!(window.location.hash || "").startsWith("#/messages/thread")) return;
-  setTimeout(() => {
-    try {
-      target.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
-    } catch {}
-    scrollThreadToBottom();
-  }, 120);
+  if (!onThread) {
+    document.body.classList.remove("message-thread-input-focus");
+  }
 }
 
 window.addEventListener("hashchange", () => {
   render();
   syncMobileViewportForThread();
   const hash = getCurrentRoutePath();
-  if (!hash.startsWith("#/messages/thread")) {
-    mobileViewportBaseline = 0;
-  }
+  if (!hash.startsWith("#/messages/thread")) document.body.classList.remove("message-thread-input-focus");
   if (hash.startsWith("#/messages/thread")) {
     uiState.messageThreadForceBottomUntil = Date.now() + 1800;
     scrollThreadToBottom();
@@ -11764,20 +11828,18 @@ function ensureAuthExpiryTimer() {
 }
 
 window.addEventListener("resize", syncMobileViewportForThread, { passive: true });
-window.addEventListener("orientationchange", () => {
-  mobileViewportBaseline = 0;
-  syncMobileViewportForThread();
-}, { passive: true });
+window.addEventListener("orientationchange", syncMobileViewportForThread, { passive: true });
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", syncMobileViewportForThread, { passive: true });
-  window.visualViewport.addEventListener("scroll", syncMobileViewportForThread, { passive: true });
 }
 
 document.addEventListener("focusin", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
   if (!(window.location.hash || "").startsWith("#/messages/thread")) return;
-  if (target.getAttribute("data-field") === "message-thread-draft" && uiState.messageThreadToolsOpen) {
+  if (target.getAttribute("data-field") !== "message-thread-draft") return;
+  document.body.classList.add("message-thread-input-focus");
+  if (uiState.messageThreadToolsOpen) {
     uiState.messageThreadToolsOpen = false;
     render();
     requestAnimationFrame(() => {
@@ -11785,21 +11847,22 @@ document.addEventListener("focusin", (event) => {
       if (next instanceof HTMLInputElement) {
         next.focus();
         next.setSelectionRange(next.value.length, next.value.length);
-        syncMobileViewportForThread();
-        ensureThreadInputVisible(next);
       }
     });
-    return;
   }
   syncMobileViewportForThread();
-  ensureThreadInputVisible(target);
+  setTimeout(() => {
+    scrollThreadToBottom();
+  }, 80);
 });
 
 document.addEventListener("focusout", () => {
   if (!(window.location.hash || "").startsWith("#/messages/thread")) return;
   setTimeout(() => {
+    const active = document.activeElement;
+    const stillEditing = active instanceof HTMLInputElement && active.getAttribute("data-field") === "message-thread-draft";
+    if (!stillEditing) document.body.classList.remove("message-thread-input-focus");
     syncMobileViewportForThread();
-    scrollThreadToBottom();
   }, 120);
 });
 
