@@ -11,6 +11,11 @@ import {
 } from "../repos/worldcard-repo.js";
 import { invalidateBootstrapCoreCache } from "./bootstrap.js";
 
+function isDbUnavailableError(error) {
+  const msg = String(error instanceof Error ? error.message : error || "");
+  return /DATABASE_URL is required|ECONNREFUSED|ENOTFOUND|connect ECONN/i.test(msg);
+}
+
 function toClock(dateLike) {
   if (!dateLike) return "刚刚";
   const d = new Date(dateLike);
@@ -28,7 +33,19 @@ export async function handleWorldCard(req, res, pathname) {
     if (!worldCardId) {
       return json(res, 400, { code: "INVALID_INPUT", message: "worldCardId is required" });
     }
-    const result = await listWorldCardComments(worldCardId, userId, limit);
+    let result;
+    try {
+      result = await listWorldCardComments(worldCardId, userId, limit);
+    } catch (error) {
+      if (isDbUnavailableError(error)) {
+        return json(res, 200, {
+          commentsCount: 0,
+          comments: [],
+          degraded: true
+        });
+      }
+      throw error;
+    }
     const rows = Array.isArray(result?.comments) ? result.comments : [];
     return json(res, 200, {
       commentsCount: Number(result?.totalCount || rows.length),
@@ -66,12 +83,23 @@ export async function handleWorldCard(req, res, pathname) {
     if (!body.worldCardId || !body.userId || !body.content) {
       return json(res, 400, { code: "INVALID_INPUT", message: "worldCardId, userId, content are required" });
     }
-    const result = await createWorldCardComment({
-      worldCardId: body.worldCardId,
-      userId: body.userId,
-      content: body.content,
-      parentCommentId: body.parentCommentId || null
-    });
+    let result;
+    try {
+      result = await createWorldCardComment({
+        worldCardId: body.worldCardId,
+        userId: body.userId,
+        content: body.content,
+        parentCommentId: body.parentCommentId || null
+      });
+    } catch (error) {
+      if (isDbUnavailableError(error)) {
+        return json(res, 503, {
+          code: "COMMENT_SERVICE_UNAVAILABLE",
+          message: "评论服务暂不可用（数据库未配置）"
+        });
+      }
+      throw error;
+    }
     if (!result?.comment) {
       return json(res, 404, { code: "WORLD_CARD_NOT_FOUND", message: "world card not found" });
     }
@@ -99,11 +127,22 @@ export async function handleWorldCard(req, res, pathname) {
       return json(res, 400, { code: "INVALID_INPUT", message: "commentId, userId are required" });
     }
     const active = body.active !== false;
-    const result = await setWorldCardCommentLike({
-      commentId: body.commentId,
-      userId: body.userId,
-      active
-    });
+    let result;
+    try {
+      result = await setWorldCardCommentLike({
+        commentId: body.commentId,
+        userId: body.userId,
+        active
+      });
+    } catch (error) {
+      if (isDbUnavailableError(error)) {
+        return json(res, 503, {
+          code: "COMMENT_SERVICE_UNAVAILABLE",
+          message: "评论服务暂不可用（数据库未配置）"
+        });
+      }
+      throw error;
+    }
     if (!result) {
       return json(res, 404, { code: "COMMENT_NOT_FOUND", message: "comment not found" });
     }
@@ -123,10 +162,21 @@ export async function handleWorldCard(req, res, pathname) {
     if (!body.commentId || !body.userId) {
       return json(res, 400, { code: "INVALID_INPUT", message: "commentId, userId are required" });
     }
-    const result = await deleteWorldCardComment({
-      commentId: body.commentId,
-      userId: body.userId
-    });
+    let result;
+    try {
+      result = await deleteWorldCardComment({
+        commentId: body.commentId,
+        userId: body.userId
+      });
+    } catch (error) {
+      if (isDbUnavailableError(error)) {
+        return json(res, 503, {
+          code: "COMMENT_SERVICE_UNAVAILABLE",
+          message: "评论服务暂不可用（数据库未配置）"
+        });
+      }
+      throw error;
+    }
     if (!result || result.status === "not_found") {
       return json(res, 404, { code: "COMMENT_NOT_FOUND", message: "comment not found" });
     }
