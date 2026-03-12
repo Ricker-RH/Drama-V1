@@ -3966,6 +3966,94 @@ code {
   margin-top: 2px;
 }
 
+.community-home-top {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #ececf2;
+  border-radius: 18px;
+  background: #fff;
+  padding: 12px;
+}
+
+.community-search-create-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.community-search-portal-flat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  text-align: left;
+}
+
+.community-search-portal-flat span {
+  color: #9ca3af;
+  font-weight: 600;
+}
+
+.community-search-portal-flat em {
+  color: #6d28d9;
+  font-style: normal;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.community-plus-create-btn {
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+  color: #fff;
+  padding: 9px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.community-plus-create-btn span {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.community-plus-create-btn em {
+  font-style: normal;
+}
+
+.community-quick-entry-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.community-quick-entry-row button {
+  border: 1px solid #ececf2;
+  border-radius: 12px;
+  background: #f8f8fc;
+  color: #4b5563;
+  padding: 8px 6px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+}
+
+.community-home-feed-tabs {
+  border: 1px solid #ececf2;
+  border-radius: 14px;
+  background: #fff;
+  padding: 6px;
+}
+
+.community-home-feed-tabs button {
+  flex: 1;
+}
+
 .community-top-panel-plain {
   gap: 8px;
 }
@@ -8958,6 +9046,32 @@ code {
   .community-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
+  }
+
+  .community-home-top {
+    border-radius: 16px;
+    padding: 10px;
+  }
+
+  .community-search-create-row {
+    gap: 8px;
+  }
+
+  .community-plus-create-btn {
+    padding: 8px 10px;
+  }
+
+  .community-plus-create-btn em {
+    font-size: 12px;
+  }
+
+  .community-quick-entry-row {
+    gap: 6px;
+  }
+
+  .community-quick-entry-row button {
+    padding: 7px 4px;
+    font-size: 12px;
   }
 
   .dynamic-detail-card h2 {

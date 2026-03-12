@@ -4984,12 +4984,36 @@ function pageCommunity() {
   const filteredList = getFilteredCommunityList();
   return renderExploreShell(`
     <section class="community-page">
-      ${renderCommunityHero("home")}
+      <header class="community-home-top">
+        <div class="community-head-row">
+          <h2>社区</h2>
+        </div>
+        <div class="community-search-create-row">
+          <button class="community-search-portal community-search-portal-flat" data-action="open-search-panel">
+            <span>搜索世界/主题/设定/作者</span>
+            <em>⌕</em>
+          </button>
+          <button class="community-plus-create-btn" data-go="#/community/create">
+            <span>＋</span>
+            <em>创建社区</em>
+          </button>
+        </div>
+        <div class="community-quick-entry-row">
+          <button data-go="#/community/search">加入社区</button>
+          <button data-go="#/community/mine">我的社区</button>
+          <button data-go="#/community/manage/joined">管理社区</button>
+          <button data-go="#/community/create">创建社区</button>
+        </div>
+      </header>
       <div class="xh-filter-panel expanded drama-filter-panel community-filter-drama">
         <div class="xh-filter-body">
           ${COMMUNITY_FILTER_CONFIG.map((group) => renderCommunityFilterGroup(group)).join("")}
           <div class="community-filter-inline-reset"><button data-action="community-filter-reset">重置筛选</button></div>
         </div>
+      </div>
+      <div class="community-tab-switch community-home-feed-tabs">
+        <button class="active" data-go="#/community/home">推荐社群</button>
+        <button data-go="#/community/mine">我的社群</button>
       </div>
       <h3>推荐社群（${filteredList.length}）</h3>
       ${renderCommunityCards(filteredList)}
