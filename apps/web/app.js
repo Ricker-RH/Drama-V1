@@ -1147,7 +1147,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
     currentHash === "#/theater/home" ||
     currentHash === "#/theater" ||
     currentHash.startsWith("#/drama") ||
-    isBackstageRoute ||
+    (isBackstageRoute && currentHash !== "#/messages/story/publish") ||
     currentHash === "#/messages/detail"
   );
   const mobileTopTabs = [
@@ -1175,7 +1175,6 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
     "#/messages/story/dynamic",
     "#/messages/story/album",
     "#/messages/story/stories",
-    "#/messages/story/publish",
     "#/messages/chat",
     "#/messages/thread",
     "#/community/home",
