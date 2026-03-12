@@ -6025,16 +6025,47 @@ async function generateWorkshopPaintWithApi({
   negative = "",
   count = 4
 }) {
-  const data = await apiJson("/paint/generate", {
+  try {
+    const data = await apiJson("/paint/generate", {
+      prompt,
+      style,
+      ratio,
+      negative,
+      count
+    });
+    const images = Array.isArray(data?.images) ? data.images : [];
+    if (images.length) {
+      return {
+        images,
+        warnings: Array.isArray(data?.warnings) ? data.warnings : [],
+        fallbackUsed: false
+      };
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "unknown";
+    const preview = buildWorkshopPaintPreviewUrls({
+      prompt,
+      style,
+      ratio,
+      negative
+    }).slice(0, Math.max(1, Math.min(4, Number(count) || 4)));
+    return {
+      images: preview,
+      warnings: [msg],
+      fallbackUsed: true
+    };
+  }
+
+  const preview = buildWorkshopPaintPreviewUrls({
     prompt,
     style,
     ratio,
-    negative,
-    count
-  });
+    negative
+  }).slice(0, Math.max(1, Math.min(4, Number(count) || 4)));
   return {
-    images: Array.isArray(data?.images) ? data.images : [],
-    warnings: Array.isArray(data?.warnings) ? data.warnings : []
+    images: preview,
+    warnings: ["empty_response"],
+    fallbackUsed: true
   };
 }
 
@@ -9320,11 +9351,15 @@ document.addEventListener("click", (event) => {
         negative: uiState.workshopPaintNegativePrompt,
         count: 4
       })
-        .then(({ images, warnings }) => {
+        .then(({ images, warnings, fallbackUsed }) => {
           uiState.workshopPaintResults = images;
-          uiState.workshopPaintFeedback = images.length
-            ? `已生成 ${images.length} 张预览图${Array.isArray(warnings) && warnings.length ? `（${warnings.length} 张失败）` : ""}，你可以继续修改提示词再试。`
-            : "未返回图片，请调整提示词后重试。";
+          if (!images.length) {
+            uiState.workshopPaintFeedback = "未返回图片，请调整提示词后重试。";
+          } else if (fallbackUsed) {
+            uiState.workshopPaintFeedback = "主图源暂不可用，已切换备用图源生成预览图。";
+          } else {
+            uiState.workshopPaintFeedback = `已生成 ${images.length} 张预览图${Array.isArray(warnings) && warnings.length ? `（${warnings.length} 张失败）` : ""}，你可以继续修改提示词再试。`;
+          }
           uiState.workshopPaintGenerating = false;
           render();
         })
@@ -9825,7 +9860,6 @@ document.addEventListener("click", (event) => {
       uiState.dynamicPublishing = true;
       uiState.dynamicShareFeedback = "";
       uiState.dynamicPublishFeedback = "";
-      uiState.dynamicTab = "我的";
       render();
       void createDynamicPostAndSync({ title, text, type: uiState.dynamicComposerType })
         .then(() => {
@@ -9840,7 +9874,6 @@ document.addEventListener("click", (event) => {
           if (uiState.currentUserId) {
             void bootstrapClientDataFull(uiState.currentUserId)
               .then(() => {
-                uiState.dynamicTab = "我的";
                 render();
               })
               .catch(() => {});
