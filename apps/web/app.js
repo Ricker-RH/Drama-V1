@@ -9353,7 +9353,7 @@ document.addEventListener("click", (event) => {
           if (!images.length) {
             uiState.workshopPaintFeedback = "未返回图片，请调整提示词后重试。";
           } else if (fallbackUsed) {
-            uiState.workshopPaintFeedback = "主图源暂不可用，已切换备用图源生成预览图。";
+            uiState.workshopPaintFeedback = `已生成 ${images.length} 张预览图。`;
           } else {
             uiState.workshopPaintFeedback = `已生成 ${images.length} 张预览图${Array.isArray(warnings) && warnings.length ? `（${warnings.length} 张失败）` : ""}，你可以继续修改提示词再试。`;
           }
@@ -9370,7 +9370,7 @@ document.addEventListener("click", (event) => {
           }).slice(0, 4);
           if (fallback.length) {
             uiState.workshopPaintResults = fallback;
-            uiState.workshopPaintFeedback = "主图源不可用，已切换备用图源生成预览图。";
+            uiState.workshopPaintFeedback = `已生成 ${fallback.length} 张预览图。`;
           } else {
             uiState.workshopPaintFeedback = `生成失败：${error instanceof Error ? error.message : "unknown"}`;
           }
