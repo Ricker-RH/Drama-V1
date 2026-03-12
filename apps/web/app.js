@@ -1142,7 +1142,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
               : `
             <div class="xh-search-wrap" data-action="noop">
               <div class="xh-search" data-action="open-search-panel">
-                <input value="${escapeHtml(activeSearchQuery)}" placeholder="搜索世界/主题/设定/作者" />
+                <input class="xh-mobile-search-input" value="${escapeHtml(activeSearchQuery)}" placeholder="搜索世界/主题/设定/作者" />
                 ${
                   isSearchResultRoute
                     ? `<button class="xh-search-submit xh-search-close-btn" data-action="cancel-search-results">×</button>`
@@ -4999,7 +4999,7 @@ function pageCommunity() {
         <div class="community-search-create-row">
           <div class="community-search-wrap xh-search-wrap" data-action="noop">
             <div class="xh-search" data-action="open-search-panel">
-              <input value="${escapeHtml(uiState.communitySearchQuery)}" placeholder="搜索世界/主题/设定/作者" />
+              <input class="xh-mobile-search-input" value="${escapeHtml(uiState.communitySearchQuery)}" placeholder="搜索世界/主题/设定/作者" />
               <button class="xh-search-submit" data-action="submit-search">⌕</button>
             </div>
             ${uiState.communitySearchPanelOpen ? renderSearchPanel("community") : ""}
@@ -6629,12 +6629,15 @@ function ensureFullDataOnDemand(hash) {
 
 function focusSearchInputIfNeeded() {
   if (!uiState.searchAutoFocus) return;
-  const input = document.querySelector(".xh-mobile-search-input");
-  if (input instanceof HTMLInputElement) {
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
+  const inputs = [...document.querySelectorAll(".xh-mobile-search-input")].filter((node) => node instanceof HTMLInputElement);
+  const activeInput = inputs.find((el) => el.offsetParent !== null) || inputs[0];
+  if (!(activeInput instanceof HTMLInputElement)) return;
+  // Defer one frame to avoid mobile click-triggered rerender stealing focus.
+  requestAnimationFrame(() => {
+    activeInput.focus();
+    activeInput.setSelectionRange(activeInput.value.length, activeInput.value.length);
     uiState.searchAutoFocus = false;
-  }
+  });
 }
 
 function syncWorldRoleScroll() {
