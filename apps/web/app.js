@@ -9362,7 +9362,18 @@ document.addEventListener("click", (event) => {
         })
         .catch((error) => {
           uiState.workshopPaintGenerating = false;
-          uiState.workshopPaintFeedback = `生成失败：${error instanceof Error ? error.message : "unknown"}`;
+          const fallback = buildWorkshopPaintPreviewUrls({
+            prompt,
+            style: uiState.workshopPaintStyle,
+            ratio: uiState.workshopPaintRatio,
+            negative: uiState.workshopPaintNegativePrompt
+          }).slice(0, 4);
+          if (fallback.length) {
+            uiState.workshopPaintResults = fallback;
+            uiState.workshopPaintFeedback = "主图源不可用，已切换备用图源生成预览图。";
+          } else {
+            uiState.workshopPaintFeedback = `生成失败：${error instanceof Error ? error.message : "unknown"}`;
+          }
           render();
         });
       return;
