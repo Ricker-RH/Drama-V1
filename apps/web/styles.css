@@ -18,6 +18,9 @@
   --fs-normal: 14px;
   --fs-medium: 18px;
   --fs-large: 25px;
+  --app-inner-height: 100vh;
+  --app-visual-height: 100vh;
+  --keyboard-offset: 0px;
 }
 
 html {
@@ -718,8 +721,8 @@ body.world-detail-route .layout.explore-mode .content {
 }
 
 .xh-shell-message {
-  height: 100vh;
-  min-height: 100vh;
+  height: var(--app-visual-height, 100vh);
+  min-height: var(--app-visual-height, 100vh);
   margin: -18px -20px;
 }
 
@@ -8608,6 +8611,7 @@ body.world-detail-route .world-page {
 
 body.message-thread-route .layout.explore-mode .content {
   padding-bottom: 0 !important;
+  overscroll-behavior-y: contain;
 }
 
 .dm-plus-btn {
@@ -9993,7 +9997,7 @@ body.message-thread-route .layout.explore-mode .content {
   }
 
   .xh-main.xh-main-message {
-    min-height: 100dvh;
+    min-height: var(--app-visual-height, 100dvh);
     grid-template-rows: auto 1fr;
   }
 
@@ -10002,18 +10006,64 @@ body.message-thread-route .layout.explore-mode .content {
   }
 
   .xh-shell-message {
-    height: 100dvh;
-    min-height: 100dvh;
+    height: var(--app-visual-height, 100dvh);
+    min-height: var(--app-visual-height, 100dvh);
     margin: 0;
   }
 
   .xh-shell-message .xh-main.xh-main-message {
     height: 100%;
-    min-height: 100dvh;
+    min-height: var(--app-visual-height, 100dvh);
   }
 
   .dm-modern-page {
     padding: 12px 0 0;
+  }
+
+  body.message-thread-route .xh-shell-message,
+  body.message-thread-route .xh-shell-message .xh-main.xh-main-message {
+    height: var(--app-visual-height, 100dvh);
+    min-height: var(--app-visual-height, 100dvh);
+  }
+
+  body.message-thread-route .xh-main-message .dm-modern-shell {
+    height: 100%;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    gap: 8px;
+  }
+
+  body.message-thread-route .dm-head {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    background: rgba(246, 248, 255, 0.92);
+    backdrop-filter: blur(8px);
+    margin: 0 -2px;
+    padding: 6px 2px 10px;
+  }
+
+  body.message-thread-route .dm-modern-messages {
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(94px + env(safe-area-inset-bottom, 0px) + var(--keyboard-offset, 0px));
+    scroll-padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px) + var(--keyboard-offset, 0px));
+  }
+
+  body.message-thread-route .xh-main-message .dm-modern-input-wrap {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--keyboard-offset, 0px));
+    z-index: 9;
+    margin: 0;
+  }
+
+  body.message-thread-route .xh-main-message .dm-tools-grid {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(58px + env(safe-area-inset-bottom, 0px) + var(--keyboard-offset, 0px));
+    z-index: 8;
   }
 
   .xh-mobile-search-row {

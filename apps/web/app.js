@@ -8423,8 +8423,13 @@ const renderers = {
   "#/me/settings": pageSettings
 };
 
+function getCurrentRoutePath() {
+  const hash = window.location.hash || "#/theater/home";
+  return hash.split("?")[0] || "#/theater/home";
+}
+
 function render() {
-  const current = window.location.hash || "#/theater/home";
+  const current = getCurrentRoutePath();
   const active = document.activeElement instanceof HTMLInputElement
     ? document.activeElement
     : null;
@@ -8518,10 +8523,10 @@ function syncWorldRoleScroll() {
 
 let carouselTimer;
 function ensureCarouselTimer() {
-  const onWorldDetail = window.location.hash === "#/world/detail";
+  const onWorldDetail = getCurrentRoutePath() === "#/world/detail";
   if (onWorldDetail && !carouselTimer) {
     carouselTimer = setInterval(() => {
-      if (window.location.hash !== "#/world/detail") return;
+      if (getCurrentRoutePath() !== "#/world/detail") return;
       uiState.worldCarouselIndex = (uiState.worldCarouselIndex + 1) % 3;
       render();
     }, 3500);
@@ -11598,8 +11603,34 @@ function scrollCurrentViewToTop() {
   });
 }
 
+function syncMobileViewportForThread() {
+  const root = document.documentElement;
+  const innerHeightPx = window.innerHeight || document.documentElement.clientHeight || 0;
+  const vv = window.visualViewport;
+  const visualHeightPx = vv?.height || innerHeightPx;
+  const visualTopPx = vv?.offsetTop || 0;
+  const keyboardOffset = Math.max(0, innerHeightPx - visualHeightPx - visualTopPx);
+  root.style.setProperty("--app-inner-height", `${Math.round(innerHeightPx)}px`);
+  root.style.setProperty("--app-visual-height", `${Math.round(visualHeightPx)}px`);
+  root.style.setProperty("--keyboard-offset", `${Math.round(keyboardOffset)}px`);
+  const onThread = (window.location.hash || "").startsWith("#/messages/thread");
+  document.body.classList.toggle("thread-keyboard-open", onThread && keyboardOffset > 24);
+}
+
+function ensureThreadInputVisible(target) {
+  if (!(target instanceof HTMLElement)) return;
+  if (!(window.location.hash || "").startsWith("#/messages/thread")) return;
+  setTimeout(() => {
+    try {
+      target.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+    } catch {}
+    scrollThreadToBottom();
+  }, 120);
+}
+
 window.addEventListener("hashchange", () => {
   render();
+  syncMobileViewportForThread();
   const hash = window.location.hash || "";
   if (hash.startsWith("#/messages/thread")) {
     uiState.messageThreadForceBottomUntil = Date.now() + 1800;
@@ -11618,6 +11649,28 @@ document.addEventListener("visibilitychange", () => {
   if (typeof messageRealtimeSyncRunner === "function") messageRealtimeSyncRunner();
 });
 
+window.addEventListener("resize", syncMobileViewportForThread, { passive: true });
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", syncMobileViewportForThread, { passive: true });
+  window.visualViewport.addEventListener("scroll", syncMobileViewportForThread, { passive: true });
+}
+
+document.addEventListener("focusin", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
+  if (!(window.location.hash || "").startsWith("#/messages/thread")) return;
+  syncMobileViewportForThread();
+  ensureThreadInputVisible(target);
+});
+
+document.addEventListener("focusout", () => {
+  if (!(window.location.hash || "").startsWith("#/messages/thread")) return;
+  setTimeout(() => {
+    syncMobileViewportForThread();
+    scrollThreadToBottom();
+  }, 120);
+});
+
 async function startApp() {
   hydrateSelectedWorldId();
   const authUserId = hydrateAuthUserId();
@@ -11633,6 +11686,7 @@ async function startApp() {
     tryHydrateFullCache(uiState.currentUserId);
   }
   render();
+  syncMobileViewportForThread();
   if (authUserId) {
     await Promise.allSettled([flushPendingWorldReactions(), flushPendingFollowOps()]);
     overlayWorldInteractionsForCurrentUser();
