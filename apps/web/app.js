@@ -1084,7 +1084,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
       }
     </div>
 
-    <section class="xh-shell ${isMessageFullRoute ? "xh-shell-message" : ""} ${showMobileTopBar ? "mobile-top-visible" : ""} ${isTopNavLinkedRoute ? "top-nav-linked" : ""}">
+    <section class="xh-shell ${isMessageFullRoute ? "xh-shell-message" : ""} ${showMobileTopBar ? "mobile-top-visible" : ""} ${isTopNavLinkedRoute ? "top-nav-linked" : ""} ${isBackstageRoute ? "is-backstage-route" : ""}">
       <aside class="xh-left">
         <div class="xh-logo"><img src="/assets/logo-v3.png" alt="爪马 Logo" /></div>
         <div class="xh-left-nav">
