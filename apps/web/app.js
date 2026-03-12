@@ -8586,8 +8586,12 @@ function render() {
   const activeCommentId = active?.getAttribute("data-comment-id") || "";
   const preserveWorldInput = (current === "#/world/detail")
     && (activeField === "world-comment-draft" || activeField === "world-reply-draft");
+  const preserveThreadInput = current.startsWith("#/messages/thread")
+    && activeField === "message-thread-draft";
   const preserveSelectionStart = preserveWorldInput ? Number(active?.selectionStart ?? -1) : -1;
   const preserveSelectionEnd = preserveWorldInput ? Number(active?.selectionEnd ?? -1) : -1;
+  const preserveThreadSelectionStart = preserveThreadInput ? Number(active?.selectionStart ?? -1) : -1;
+  const preserveThreadSelectionEnd = preserveThreadInput ? Number(active?.selectionEnd ?? -1) : -1;
 
   document.body.classList.toggle("play-route", current.startsWith("#/play"));
   document.body.classList.toggle("message-thread-route", current.startsWith("#/messages/thread"));
@@ -8600,7 +8604,7 @@ function render() {
   ensureDramaHeroTimer();
   ensureMessageRealtimeSync();
   if (current.startsWith("#/messages/thread")) {
-    scrollThreadToBottom();
+    if (!preserveThreadInput) scrollThreadToBottom();
     uiState.messageThreadAutoScrollOnEnter = false;
   }
   focusSearchInputIfNeeded();
@@ -8619,6 +8623,25 @@ function render() {
         nextInput.setSelectionRange(start, end);
       } catch {
         // ignore selection errors for unsupported input states
+      }
+    });
+  }
+  if (preserveThreadInput) {
+    requestAnimationFrame(() => {
+      const nextInput = document.querySelector("input[data-field='message-thread-draft']");
+      if (!(nextInput instanceof HTMLInputElement)) return;
+      try {
+        nextInput.focus({ preventScroll: true });
+      } catch {
+        nextInput.focus();
+      }
+      const len = nextInput.value.length;
+      const start = preserveThreadSelectionStart >= 0 ? Math.min(preserveThreadSelectionStart, len) : len;
+      const end = preserveThreadSelectionEnd >= 0 ? Math.min(preserveThreadSelectionEnd, len) : start;
+      try {
+        nextInput.setSelectionRange(start, end);
+      } catch {
+        // ignore selection errors on unsupported input states
       }
     });
   }
