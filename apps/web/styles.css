@@ -753,7 +753,7 @@ code {
 
 .xh-head {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
 }
@@ -771,7 +771,7 @@ code {
 
 .xh-search-wrap {
   width: min(680px, 100%);
-  justify-self: center;
+  justify-self: end;
   position: relative;
 }
 
@@ -1105,6 +1105,7 @@ code {
   display: flex;
   gap: 10px;
   align-items: center;
+  justify-self: start;
 }
 
 .xh-head-links button {
@@ -5113,13 +5114,13 @@ code {
 .theater-feed-grid {
   display: block;
   columns: 5;
-  column-gap: 16px;
+  column-gap: 10px;
 }
 
 .theater-feed-grid .home-card {
   width: 100%;
   display: inline-block;
-  margin: 0 0 16px;
+  margin: 0 0 10px;
   break-inside: avoid;
 }
 
@@ -5231,6 +5232,7 @@ code {
 
 .drama-hero-arrow.right {
   right: 14px;
+  border: none;
 }
 
 .drama-hero-dots {
@@ -8623,7 +8625,7 @@ code {
   .xh-mobile-topic-expand {
     width: 30px;
     height: 30px;
-    border: 1px solid #ddd6fe;
+    border: none;
     border-radius: 10px;
     background: #fff;
     color: #7c3aed;

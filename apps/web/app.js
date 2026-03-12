@@ -103,6 +103,7 @@ const WORKSHOP_AUTHORING_MODE_META = {
     desc: "输入一段设定，AI 拆分成结构字段后再编辑。"
   }
 };
+const WORKSHOP_FORCE_CUSTOM_MODES = new Set(["virtual_character"]);
 const WORKSHOP_TEMPLATES = {
   long_narrative: [
     {
@@ -401,7 +402,7 @@ const uiState = {
   workshopSelectedTemplateId: {
     long_narrative: "night-city",
     short_narrative: "campus-rush",
-    virtual_character: "cold-ceo"
+    virtual_character: ""
   },
   workshopWorldDraft: {
     openingLine: "你推开港区旧站台的门，冷雾从鞋面一路爬上膝盖。",
@@ -427,16 +428,16 @@ const uiState = {
     cluePool: "名额表 / 模考排名 / 竞赛通知"
   },
   workshopCharacterDraft: {
-    personaName: "顾衍",
-    relationStart: "你是新入职成员，他对你保持审视与距离。",
-    personaCore: "高控制欲、低表达、对承诺极度敏感。",
-    dialogueStyle: "短句、反问、克制，偶尔用数据压场。",
-    relationBoundary: "不接受情绪勒索，不在公开场合暴露私域关系。",
-    taboos: "失约、越级试探、公开逼问私事。",
-    openingLine: "清晨的落地窗前，他把签字笔停在半空，抬眼看向你。",
-    memoryHooks: "签字笔停顿 / 银色镜片反光 / 考勤报表角落折痕",
-    growthMilestones: "信任阈值 20/50/80 解锁：资源共享、共同决策、私密坦白。",
-    triggerWords: "失控、背叛、效率、兑现。"
+    personaName: "",
+    relationStart: "",
+    personaCore: "",
+    dialogueStyle: "",
+    relationBoundary: "",
+    taboos: "",
+    openingLine: "",
+    memoryHooks: "",
+    growthMilestones: "",
+    triggerWords: ""
   },
   workshopCustomRaw: "",
   workshopCustomParsing: false,
@@ -1087,6 +1088,14 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
 
       <div class="xh-main ${isMessageFullRoute ? "xh-main-message" : ""}">
         <div class="xh-head">
+          <div class="xh-head-links">
+            <button class="xh-coin-chip" data-go="#/me/coins">🪙 ${(uiState.isLoggedIn ? uiState.userCoins : 0).toLocaleString()}</button>
+            ${
+              uiState.isLoggedIn
+                ? `<button class="xh-avatar-btn logged" data-action="open-self-profile">${getAvatarText(uiState.profile.name)}</button>`
+                : `<button class="xh-avatar-btn guest" data-action="open-login-modal">👤</button>`
+            }
+          </div>
           ${
             !showHeadSearch
               ? `<div></div>`
@@ -1104,14 +1113,6 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
             </div>
           `
           }
-          <div class="xh-head-links">
-            <button class="xh-coin-chip" data-go="#/me/coins">🪙 ${(uiState.isLoggedIn ? uiState.userCoins : 0).toLocaleString()}</button>
-            ${
-              uiState.isLoggedIn
-                ? `<button class="xh-avatar-btn logged" data-action="open-self-profile">${getAvatarText(uiState.profile.name)}</button>`
-                : `<button class="xh-avatar-btn guest" data-action="open-login-modal">👤</button>`
-            }
-          </div>
         </div>
 
         ${
@@ -4212,6 +4213,18 @@ function getWorkshopDraftByMode(mode = uiState.workshopMode) {
   return uiState.workshopWorldDraft;
 }
 
+function getWorkshopEffectiveAuthoringMode(mode = uiState.workshopMode) {
+  if (WORKSHOP_FORCE_CUSTOM_MODES.has(mode)) return "custom";
+  return WORKSHOP_AUTHORING_MODE_META[uiState.workshopAuthoringMode] ? uiState.workshopAuthoringMode : "template";
+}
+
+function resetWorkshopDraft(mode = uiState.workshopMode) {
+  const normalized = normalizeWorkshopDraftForMode(mode, {});
+  Object.entries(normalized).forEach(([key, value]) => {
+    setWorkshopDraftField(mode, key, value);
+  });
+}
+
 function setWorkshopDraftField(mode, field, value) {
   const safe = String(value || "");
   if (mode === "short_narrative") {
@@ -4288,11 +4301,12 @@ function hydrateWorkshopDraft(mode = uiState.workshopMode, payload = {}) {
 
 function buildWorkshopContentJson(mode = uiState.workshopMode, draft = getWorkshopDraftByMode(mode)) {
   const normalized = normalizeWorkshopDraftForMode(mode, draft);
+  const authoringMode = getWorkshopEffectiveAuthoringMode(mode);
   if (mode === "short_narrative") {
     return {
       schemaVersion: "creator_card_v3",
       cardType: "story",
-      authoringMode: uiState.workshopAuthoringMode,
+      authoringMode,
       openingAnchor: normalized.openingAnchor,
       endingAnchors: normalized.endingAnchors,
       fixedNpcs: normalized.fixedNpcs,
@@ -4308,7 +4322,7 @@ function buildWorkshopContentJson(mode = uiState.workshopMode, draft = getWorksh
     return {
       schemaVersion: "creator_card_v3",
       cardType: "character",
-      authoringMode: uiState.workshopAuthoringMode,
+      authoringMode,
       personaName: normalized.personaName,
       relationStart: normalized.relationStart,
       personaCore: normalized.personaCore,
@@ -4324,7 +4338,7 @@ function buildWorkshopContentJson(mode = uiState.workshopMode, draft = getWorksh
   return {
     schemaVersion: "creator_card_v3",
     cardType: "world",
-    authoringMode: uiState.workshopAuthoringMode,
+    authoringMode,
     openingLine: normalized.openingLine,
     worldSetting: normalized.worldSetting,
     playerIdentity: normalized.playerIdentity,
@@ -4340,13 +4354,14 @@ function buildWorkshopContentJson(mode = uiState.workshopMode, draft = getWorksh
 
 function buildWorkshopRuntimeConfig(mode = uiState.workshopMode, draft = getWorkshopDraftByMode(mode)) {
   const normalized = normalizeWorkshopDraftForMode(mode, draft);
+  const authoringMode = getWorkshopEffectiveAuthoringMode(mode);
   if (mode === "short_narrative") {
     return {
       guidance_strength: "low",
       opening_min_chars: 500,
       must_fields: ["openingAnchor", "endingAnchors", "fixedNpcs", "primaryGoal", "coreConflict"],
       rules: ["respect_story_anchors", "keep_scope_limited", "recover_to_ending_anchor"],
-      authoring_mode: uiState.workshopAuthoringMode,
+      authoring_mode: authoringMode,
       field_snapshot: normalized,
       quality_gate: { min_opening_chars: 500, max_retry: 2 }
     };
@@ -4357,7 +4372,7 @@ function buildWorkshopRuntimeConfig(mode = uiState.workshopMode, draft = getWork
       opening_min_chars: 500,
       must_fields: ["personaName", "relationStart", "personaCore", "dialogueStyle", "relationBoundary", "taboos", "openingLine", "memoryHooks"],
       rules: ["stay_in_character", "respect_relation_boundary", "avoid_narrator_takeover"],
-      authoring_mode: uiState.workshopAuthoringMode,
+      authoring_mode: authoringMode,
       field_snapshot: normalized,
       quality_gate: { min_opening_chars: 500, max_retry: 2 }
     };
@@ -4367,16 +4382,17 @@ function buildWorkshopRuntimeConfig(mode = uiState.workshopMode, draft = getWork
     opening_min_chars: 500,
     must_fields: ["openingLine", "worldSetting", "playerIdentity", "primaryGoal", "coreConflict", "fixedNpcs"],
     rules: ["follow_user_intent", "sandbox_freeplay", "state_first_narrative_second"],
-    authoring_mode: uiState.workshopAuthoringMode,
+    authoring_mode: authoringMode,
     field_snapshot: normalized,
     quality_gate: { min_opening_chars: 500, max_retry: 2 }
   };
 }
 
 function buildWorkshopQualityRules(mode = uiState.workshopMode) {
+  const authoringMode = getWorkshopEffectiveAuthoringMode(mode);
   return {
     mode,
-    authoring_mode: uiState.workshopAuthoringMode,
+    authoring_mode: authoringMode,
     min_opening_chars: 500,
     must_include: mode === "long_narrative"
       ? ["背景", "任务", "可用资源", "潜在冲突", "行动入口"]
@@ -4472,6 +4488,7 @@ async function saveWorkshopCardToApi() {
     return null;
   }
   const mode = uiState.workshopMode;
+  const authoringMode = getWorkshopEffectiveAuthoringMode(mode);
   const draft = getWorkshopDraftByMode(mode);
   const cardId = uiState.workshopActiveCardId;
   const payload = {
@@ -4479,12 +4496,12 @@ async function saveWorkshopCardToApi() {
     cardMode: mode,
     title: getWorkshopCardTitle(mode, draft),
     subtitle: WORKSHOP_MODE_META[mode]?.label || mode,
-    templateId: uiState.workshopAuthoringMode === "template" ? (uiState.workshopSelectedTemplateId[mode] || null) : null,
+    templateId: authoringMode === "template" ? (uiState.workshopSelectedTemplateId[mode] || null) : null,
     contentJson: buildWorkshopContentJson(mode, draft),
     promptContextJson: {
       mode,
       source: "workshop_ui",
-      authoring_mode: uiState.workshopAuthoringMode,
+      authoring_mode: authoringMode,
       parse_meta: uiState.workshopCustomParsed || null,
       updatedAt: new Date().toISOString()
     },
@@ -4736,7 +4753,8 @@ function pageWorkshop() {
   }
   const mode = uiState.workshopMode;
   const meta = WORKSHOP_MODE_META[mode];
-  const authoringMode = uiState.workshopAuthoringMode;
+  const authoringMode = getWorkshopEffectiveAuthoringMode(mode);
+  const forceCustom = WORKSHOP_FORCE_CUSTOM_MODES.has(mode);
   const templateList = WORKSHOP_TEMPLATES[mode] || [];
   const selectedTemplate = uiState.workshopSelectedTemplateId[mode] || templateList[0]?.id || "";
   const draft = normalizeWorkshopDraftForMode(mode, getWorkshopDraftByMode(mode));
@@ -4814,15 +4832,21 @@ function pageWorkshop() {
         <article class="workshop-panel editor">
           <div class="workshop-panel-head">
             <h3>模式编辑器</h3>
-            <div class="workshop-input-tabs">
-              ${Object.entries(WORKSHOP_AUTHORING_MODE_META)
-                .map(([key, item]) => `
-                  <button class="${authoringMode === key ? "active" : ""}" data-action="workshop-set-authoring-mode" data-authoring-mode="${key}">
-                    <strong>${item.label}</strong>
-                    <small>${item.desc}</small>
-                  </button>
-                `).join("")}
-            </div>
+            ${
+              forceCustom
+                ? `<p class="workshop-feedback">角色卡支持自由创建，不再限制模板。</p>`
+                : `
+              <div class="workshop-input-tabs">
+                ${Object.entries(WORKSHOP_AUTHORING_MODE_META)
+                  .map(([key, item]) => `
+                    <button class="${authoringMode === key ? "active" : ""}" data-action="workshop-set-authoring-mode" data-authoring-mode="${key}">
+                      <strong>${item.label}</strong>
+                      <small>${item.desc}</small>
+                    </button>
+                  `).join("")}
+              </div>
+            `
+            }
             ${
               authoringMode === "template"
                 ? `
@@ -7183,6 +7207,9 @@ document.addEventListener("click", (event) => {
       const mode = actionTarget.getAttribute("data-mode");
       if (mode && WORKSHOP_MODE_META[mode]) {
         uiState.workshopMode = mode;
+        if (WORKSHOP_FORCE_CUSTOM_MODES.has(mode)) {
+          uiState.workshopAuthoringMode = "custom";
+        }
         uiState.workshopActiveCardId = "";
         uiState.workshopCustomParsed = null;
         uiState.workshopFeedback = `已切换：${WORKSHOP_MODE_META[mode].label}`;
@@ -7191,6 +7218,12 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "workshop-set-authoring-mode") {
+      if (WORKSHOP_FORCE_CUSTOM_MODES.has(uiState.workshopMode)) {
+        uiState.workshopAuthoringMode = "custom";
+        uiState.workshopFeedback = "角色卡仅支持自定义创建";
+        render();
+        return;
+      }
       const authoringMode = actionTarget.getAttribute("data-authoring-mode");
       if (authoringMode && WORKSHOP_AUTHORING_MODE_META[authoringMode]) {
         uiState.workshopAuthoringMode = authoringMode;
@@ -7233,7 +7266,9 @@ document.addEventListener("click", (event) => {
       uiState.workshopCustomParsed = null;
       const draft = card.draft && typeof card.draft === "object" ? card.draft : {};
       hydrateWorkshopDraft(card.mode, draft);
-      uiState.workshopAuthoringMode = String(card.authoringMode || "template");
+      uiState.workshopAuthoringMode = WORKSHOP_FORCE_CUSTOM_MODES.has(card.mode)
+        ? "custom"
+        : String(card.authoringMode || "template");
       uiState.workshopSaveDecisionOpen = false;
       uiState.workshopPublishModalOpen = false;
       uiState.workshopPendingCardId = card.id;
@@ -7293,6 +7328,11 @@ document.addEventListener("click", (event) => {
     }
     if (action === "workshop-apply-template") {
       const mode = uiState.workshopMode;
+      if (WORKSHOP_FORCE_CUSTOM_MODES.has(mode)) {
+        uiState.workshopFeedback = "角色卡不再使用模板，请直接编辑字段";
+        render();
+        return;
+      }
       const templateId = uiState.workshopSelectedTemplateId[mode] || "";
       applyWorkshopTemplate(mode, templateId);
       uiState.workshopFeedback = "模板已套用";
@@ -7326,9 +7366,14 @@ document.addEventListener("click", (event) => {
     }
     if (action === "workshop-reset-mode") {
       const mode = uiState.workshopMode;
-      applyWorkshopTemplate(mode, (WORKSHOP_TEMPLATES[mode] || [])[0]?.id || "");
+      if (WORKSHOP_FORCE_CUSTOM_MODES.has(mode)) {
+        resetWorkshopDraft(mode);
+        uiState.workshopFeedback = "角色卡字段已清空，可自由创建";
+      } else {
+        applyWorkshopTemplate(mode, (WORKSHOP_TEMPLATES[mode] || [])[0]?.id || "");
+        uiState.workshopFeedback = "当前模式已重置为默认模板";
+      }
       uiState.workshopCustomParsed = null;
-      uiState.workshopFeedback = "当前模式已重置为默认模板";
       render();
       return;
     }
@@ -8480,6 +8525,7 @@ document.addEventListener("change", (event) => {
     return;
   }
   if (target instanceof HTMLSelectElement && target.getAttribute("data-field") === "workshop-template-id") {
+    if (WORKSHOP_FORCE_CUSTOM_MODES.has(uiState.workshopMode)) return;
     uiState.workshopSelectedTemplateId[uiState.workshopMode] = target.value;
     return;
   }
