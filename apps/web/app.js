@@ -3886,11 +3886,8 @@ async function submitPlayTurn(actionText, options = {}) {
     }
     if (typeof response.round === "number") uiState.playRound = response.round;
     if (autoOpening) uiState.playAutoOpeningRequested = true;
-    if (response.provider) {
-      const reason = String(response.providerReason || "").trim();
-      const detail = reason ? `（${reason}）` : "";
-      showPlaySystemHint(`引擎：${response.provider}${detail}`);
-    }
+    const providerHint = buildProviderHintMessage(response);
+    if (providerHint) showPlaySystemHint(providerHint);
   } catch (error) {
     if (requestNonce !== uiState.playRequestNonce) return;
     if (String(getSelectedWorld()?.id || "") !== requestWorldId) return;
@@ -3968,6 +3965,25 @@ function showPlaySystemHintBatch(lines) {
   queue.forEach((line, index) => {
     setTimeout(() => showPlaySystemHint(line), index * 1900);
   });
+}
+
+function buildProviderHintMessage(response) {
+  const provider = String(response?.provider || "").trim();
+  const reason = String(response?.providerReason || "").trim();
+  if (!provider || !reason) return "";
+  const normalized = reason.toLowerCase();
+  // Hide backend/internal fallback traces from end users.
+  if (
+    normalized.startsWith("stream_partial:")
+    || normalized.startsWith("stream_partial_quality_bypass:")
+    || normalized.includes("opening_gate_failed")
+    || normalized.includes("missing_json_block")
+    || normalized.includes("missing_narrative_block")
+    || normalized.includes("quality_gate_failed")
+  ) {
+    return "";
+  }
+  return `引擎：${provider}（${reason}）`;
 }
 
 function pageDirectMessage() {
