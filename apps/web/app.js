@@ -395,6 +395,7 @@ const uiState = {
   playIdeaOptions: [],
   playPromptQuestion: "你打算怎么做？",
   playPromptOptions: [],
+  playDynamicClues: "",
   playAutoOpeningRequested: false,
   workshopMode: "long_narrative",
   workshopAuthoringMode: "template",
@@ -1979,7 +1980,7 @@ function getWorldProfile(world = getSelectedWorld()) {
       hint: String(w?.playHook || w?.play_hook || `先围绕“${w?.theme || "核心主题"}”做小步试探，再决定是否强推进主线。`),
       mainQuest: mainQuest || `推进《${w?.title || "当前世界"}》主线并锁定关键胜负手`,
       npc: npc || "关键角色（待接触）",
-      clues: clues || "初始线索 / 关系变化 / 环境异动",
+      clues: clues || "",
       statline: String(w?.statline || `世界热度 ${80 + (hashText(w?.id) % 18)} · 连载中 · ${((4 + (hashText(w?.title) % 80)) / 10).toFixed(1)}万人在追`),
       intro: [summary, overview].filter(Boolean),
       opening: openingSummary ? [openingSummary] : []
@@ -1990,7 +1991,7 @@ function getWorldProfile(world = getSelectedWorld()) {
     hint: `先围绕“${w?.theme || "核心主题"}”做小步试探，再决定是否强推进主线。`,
     mainQuest: `推进《${w?.title || "当前世界"}》主线并锁定关键胜负手`,
     npc: "关键角色（待接触）",
-    clues: "初始线索 / 关系变化 / 环境异动",
+    clues: "",
     statline: `世界热度 ${80 + (hashText(w?.id) % 18)} · 连载中 · ${((4 + (hashText(w?.title) % 80)) / 10).toFixed(1)}万人在追`,
     intro: [
       `${w?.title || "这个世界"}已经进入高压阶段，任何行动都会影响后续关系与资源走向。`,
@@ -2074,6 +2075,7 @@ function buildStoryContext(world = getSelectedWorld()) {
   const profile = getWorldProfile(selected);
   const cardType = inferCardTypeByWorld(selected, profile);
   const mode = modeByCardType(cardType);
+  const effectiveClues = String(uiState.playDynamicClues || profile?.clues || "").trim();
   return {
     card_type: cardType,
     mode,
@@ -2084,7 +2086,7 @@ function buildStoryContext(world = getSelectedWorld()) {
     chapter: profile?.chapter || "",
     mainQuest: profile?.mainQuest || "",
     npc: profile?.npc || "",
-    clues: profile?.clues || "",
+    clues: effectiveClues,
     opening_line: String(selected?.opening_line || selected?.openingLine || profile?.opening_line || profile?.openingLine || profile?.opening?.[0] || "").trim(),
     opening_anchor: String(selected?.opening_anchor || selected?.openingAnchor || profile?.opening_anchor || profile?.openingAnchor || "").trim(),
     hint: profile?.hint || "",
@@ -3306,6 +3308,7 @@ function resetPlayStateForWorld(worldId = uiState.selectedWorldId) {
   uiState.playEntries = getProfileOpeningEntries(profile);
   uiState.playPromptQuestion = "你打算怎么做？";
   uiState.playPromptOptions = [];
+  uiState.playDynamicClues = "";
   uiState.playAutoOpeningRequested = false;
 }
 
@@ -3884,6 +3887,16 @@ async function submitPlayTurn(actionText, options = {}) {
       if (narrativeEntries.length) uiState.playEntries.push(...narrativeEntries);
       showPlaySystemHintBatch(impactHints);
     }
+    if (response?.stateDelta) {
+      const active = Array.isArray(response.stateDelta.cluesActive)
+        ? response.stateDelta.cluesActive.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+      if (active.length) {
+        uiState.playDynamicClues = active.join(" / ");
+      } else if (typeof response.stateDelta.clues === "string" && response.stateDelta.clues.trim()) {
+        uiState.playDynamicClues = response.stateDelta.clues.trim();
+      }
+    }
     if (typeof response.round === "number") uiState.playRound = response.round;
     if (autoOpening) uiState.playAutoOpeningRequested = true;
     const providerHint = buildProviderHintMessage(response);
@@ -3909,6 +3922,16 @@ async function submitPlayTurn(actionText, options = {}) {
           .filter((line) => !/^(抛球给用户|抛球给用户)：/.test(String(line)));
         if (narrativeEntries.length) uiState.playEntries.push(...narrativeEntries);
         showPlaySystemHintBatch(impactHints);
+      }
+      if (response?.stateDelta) {
+        const active = Array.isArray(response.stateDelta.cluesActive)
+          ? response.stateDelta.cluesActive.map((x) => String(x || "").trim()).filter(Boolean)
+          : [];
+        if (active.length) {
+          uiState.playDynamicClues = active.join(" / ");
+        } else if (typeof response.stateDelta.clues === "string" && response.stateDelta.clues.trim()) {
+          uiState.playDynamicClues = response.stateDelta.clues.trim();
+        }
       }
       if (typeof response.round === "number") uiState.playRound = response.round;
       showPlaySystemHint("流式不可用，已自动切换普通生成");
@@ -4070,6 +4093,7 @@ function pagePlayCore() {
   const profile = getWorldProfile(world);
   ensurePlayAutoOpening(world);
   const stage = `${Math.min(4, Math.max(1, Math.floor((uiState.playRound + 1) / 2)))}/4`;
+  const displayClues = String(uiState.playDynamicClues || profile.clues || "动态探索中").trim();
   const modelMenuOpen = uiState.playModelMenuOpen || window.location.hash === "#/play/model";
   const roundLabel = `第${uiState.playRound}幕 · ${uiState.playChapter} · 03:17`;
   return `
@@ -4105,7 +4129,7 @@ function pagePlayCore() {
               <div class="play-status-item"><span>当前任务</span><strong>${escapeHtml(profile.mainQuest)}</strong></div>
               <div class="play-status-item"><span>阶段</span><strong>${stage}</strong></div>
               <div class="play-status-item"><span>NPC</span><strong>${escapeHtml(profile.npc)}</strong></div>
-              <div class="play-status-item"><span>线索</span><strong>${escapeHtml(profile.clues)}</strong></div>
+              <div class="play-status-item"><span>线索</span><strong>${escapeHtml(displayClues)}</strong></div>
             </div>
           `
               : ""
@@ -4651,7 +4675,6 @@ function getWorkshopPublishValidationErrors() {
   if (!String(d.chapter || "").trim()) return "请填写章节标题";
   if (!String(d.mainQuest || "").trim()) return "请填写当前任务";
   if (!String(d.npc || "").trim()) return "请填写关键 NPC";
-  if (!String(d.clues || "").trim()) return "请填写线索字段";
   if (!String(d.intro || "").trim()) return "请填写世界简介";
   if (String(d.intro || "").trim().length < 20) return "世界简介至少 20 字";
   if (!String(d.format || "").trim()) return "请填写体裁";

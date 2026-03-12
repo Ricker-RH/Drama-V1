@@ -499,12 +499,22 @@ function parseStoryClueTerms(sessionMeta = {}) {
   const storyContext = sessionMeta?.storyContext && typeof sessionMeta.storyContext === "object"
     ? sessionMeta.storyContext
     : {};
-  return String(storyContext.clues || "")
+  const prevActive = Array.isArray(sessionMeta?.previousTurn?.stateDelta?.cluesActive)
+    ? sessionMeta.previousTurn.stateDelta.cluesActive
+    : [];
+  const raw = [
+    ...prevActive,
+    storyContext.clues
+  ]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean)
+    .join(" / ");
+  return raw
     .split(/[，。；、,/\-|：:\s\[\]（）()·]+/)
     .map((x) => x.trim())
     .filter(Boolean)
     .filter((x) => x.length >= 2 && x.length <= 16)
-    .slice(0, 10);
+    .slice(0, 12);
 }
 
 function pickInputAnchors(input = "", max = 4) {
