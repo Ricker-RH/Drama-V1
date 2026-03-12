@@ -221,21 +221,22 @@ export async function markConversationRead({ conversationId, userId }) {
     [conversationId]
   );
   const latest = latestRes.rows[0] || null;
+  const nowIso = new Date().toISOString();
   await query(
     `update conversation_members
      set unread_count = 0,
          last_read_message_id = $3::uuid,
-         last_read_at = case when $4::timestamptz is not null then $4::timestamptz else now() end,
+         last_read_at = now(),
          updated_at = now()
      where conversation_id = $1
        and user_id = $2
        and deleted_at is null`,
-    [conversationId, userId, latest?.id || null, latest?.created_at || null]
+    [conversationId, userId, latest?.id || null]
   );
   return {
     conversationId,
     userId,
     lastReadMessageId: latest?.id || null,
-    lastReadAt: latest?.created_at || null
+    lastReadAt: nowIso
   };
 }

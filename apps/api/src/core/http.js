@@ -2,7 +2,10 @@ export function json(res, statusCode, data) {
   const payload = JSON.stringify(data);
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(payload)
+    "Content-Length": Buffer.byteLength(payload),
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Pragma: "no-cache",
+    Expires: "0"
   });
   res.end(payload);
 }

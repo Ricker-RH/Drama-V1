@@ -3856,6 +3856,7 @@ async function startOrReuseDirectConversation(targetUserId, targetName = "对方
   if (navigate) {
     uiState.selectedMessageId = conversationId;
     uiState.messageReadAckConversationId = "";
+    uiState.messageThreadAutoScrollOnEnter = true;
     markMessageRead(conversationId);
   }
   uiState.messageFeedback = "";
@@ -8491,9 +8492,13 @@ function ensureMessageRealtimeSync() {
   if (!canSync && messageRealtimeTimer) {
     clearInterval(messageRealtimeTimer);
     messageRealtimeTimer = undefined;
+    messageRealtimeSyncRunner = null;
     return;
   }
-  if (!canSync) return;
+  if (!canSync) {
+    messageRealtimeSyncRunner = null;
+    return;
+  }
   const runSync = () => {
     if (messageRealtimeSyncing) return;
     messageRealtimeSyncing = true;
