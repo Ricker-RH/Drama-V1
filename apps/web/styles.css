@@ -6844,9 +6844,10 @@ body.world-detail-route .world-page {
 .world-carousel {
   position: relative;
   overflow: hidden;
+  left: 50%;
   width: 100vw;
-  margin-left: calc(50% - 50vw);
-  margin-right: calc(50% - 50vw);
+  margin: 0;
+  transform: translateX(-50%);
 }
 
 .world-hero-nav {
@@ -9715,6 +9716,10 @@ body.message-thread-route .layout.explore-mode .content {
 }
 
 @media (max-width: 1180px) {
+  .world-carousel {
+    width: 100dvw;
+  }
+
   .xh-shell {
     grid-template-columns: 1fr;
   }
