@@ -5985,6 +5985,23 @@ function buildWorkshopPaintPreviewUrls({
   });
 }
 
+async function generateWorkshopPaintWithApi({
+  prompt = "",
+  style = "cinematic",
+  ratio = "1:1",
+  negative = "",
+  count = 4
+}) {
+  const data = await apiJson("/paint/generate", {
+    prompt,
+    style,
+    ratio,
+    negative,
+    count
+  });
+  return Array.isArray(data?.images) ? data.images : [];
+}
+
 function buildCreatorWorks() {
   return [...uiState.workshopSavedCards]
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
@@ -9256,7 +9273,29 @@ document.addEventListener("click", (event) => {
         negative: uiState.workshopPaintNegativePrompt
       });
       uiState.workshopPaintGenerating = false;
+      uiState.workshopPaintComposerOpen = false;
       render();
+      return;
+    }
+    if (action === "workshop-paint-toggle-composer") {
+      uiState.workshopPaintComposerOpen = !uiState.workshopPaintComposerOpen;
+      render();
+      return;
+    }
+    if (action === "workshop-paint-category") {
+      const key = String(actionTarget.getAttribute("data-key") || "").trim();
+      if (key === "all" || key === "sfw" || key === "nsfw" || key === "anime") {
+        uiState.workshopPaintCategory = key;
+        render();
+      }
+      return;
+    }
+    if (action === "workshop-paint-sort") {
+      const key = String(actionTarget.getAttribute("data-key") || "").trim();
+      if (key === "latest" || key === "hot" || key === "top_like") {
+        uiState.workshopPaintSort = key;
+        render();
+      }
       return;
     }
     if (action === "workshop-paint-clear") {
