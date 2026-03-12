@@ -11365,6 +11365,8 @@ button {
   .xh-side-tab.active,
   .search-result-tabs button.active,
   .search-result-subtabs button.active,
+  .xh-mobile-topic-chip.active,
+  .xh-mobile-topic-tab.active,
   .msg-tabs button.active,
   .me-tab-row button.active,
   .me-coins-tabs button.active,
