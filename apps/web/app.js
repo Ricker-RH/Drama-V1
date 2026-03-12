@@ -4960,32 +4960,24 @@ function pageCommunity() {
   const filteredList = getFilteredCommunityList();
   return renderExploreShell(`
     <section class="community-page">
-      <div class="community-top-panel">
-        <div class="community-head-row">
+      <div class="community-top-panel community-top-panel-plain">
+        <div class="community-head-row community-head-row-plain">
+          <h2>社区</h2>
+          <button class="community-search-icon-btn" data-go="#/community/search" aria-label="搜索社区">⌕</button>
+        </div>
+        <div class="community-head-actions plain">
           <div class="community-top-switch">
-            <button class="active" data-go="#/community/home">社区</button>
+            <button class="active" data-go="#/community/home">推荐</button>
             <button data-go="#/community/mine">我的社群</button>
           </div>
-          <div class="community-head-actions">
-            <button class="community-create-btn" data-go="#/community/create">+ 创建</button>
-          </div>
+          <button class="community-create-btn" data-go="#/community/create">创建</button>
         </div>
-        <div class="xh-search-wrap community-search-wrap" data-action="noop">
-          <div class="xh-search community-search-portal" data-action="open-search-panel">
-            <input value="${escapeHtml(uiState.communitySearchQuery)}" placeholder="搜索世界/主题/设定/作者" />
-            <button class="xh-search-submit" data-action="submit-search">⌕</button>
-          </div>
-          ${showInlineCommunitySearchPanel ? renderSearchPanel("community") : ""}
-        </div>
+        ${showInlineCommunitySearchPanel ? `<div class="community-search-float">${renderSearchPanel("community")}</div>` : ""}
       </div>
-      <div class="xh-filter-panel ${uiState.communityFilterExpanded ? "expanded" : "collapsed"}">
-        <div class="xh-filter-head">
-          <strong>筛选社群</strong>
-          <button class="xh-filter-toggle" data-action="toggle-community-filter">${uiState.communityFilterExpanded ? "收起" : "展开"}</button>
-        </div>
+      <div class="xh-filter-panel expanded drama-filter-panel community-filter-drama">
         <div class="xh-filter-body">
           ${COMMUNITY_FILTER_CONFIG.map((group) => renderCommunityFilterGroup(group)).join("")}
-          <div class="community-filter-actions"><button data-action="community-filter-reset">重置</button><button data-action="community-filter-apply">应用筛选</button></div>
+          <div class="community-filter-inline-reset"><button data-action="community-filter-reset">重置筛选</button></div>
         </div>
       </div>
       <h3>推荐社群（${filteredList.length}）</h3>
