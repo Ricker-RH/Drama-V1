@@ -103,7 +103,7 @@ const WORKSHOP_AUTHORING_MODE_META = {
     desc: "输入一段设定，AI 拆分成结构字段后再编辑。"
   }
 };
-const WORKSHOP_FORCE_CUSTOM_MODES = new Set(["virtual_character"]);
+const WORKSHOP_FORCE_CUSTOM_MODES = new Set(["long_narrative", "short_narrative", "virtual_character"]);
 const WORKSHOP_TEMPLATES = {
   long_narrative: [
     {
@@ -398,34 +398,34 @@ const uiState = {
   playPromptOptions: [],
   playAutoOpeningRequested: false,
   workshopMode: "long_narrative",
-  workshopAuthoringMode: "template",
+  workshopAuthoringMode: "custom",
   workshopSelectedTemplateId: {
-    long_narrative: "night-city",
-    short_narrative: "campus-rush",
+    long_narrative: "",
+    short_narrative: "",
     virtual_character: ""
   },
   workshopWorldDraft: {
-    openingLine: "你推开港区旧站台的门，冷雾从鞋面一路爬上膝盖。",
-    worldSetting: "近未来海港城，财团与灰产共治，信息比火力更值钱。",
-    playerIdentity: "你是刚从底层爬上来的中间人，既懂街头规则也懂体制缝隙。",
-    primaryGoal: "180 天内从底层中间人进入候选名单并拿到稳定席位。",
-    coreConflict: "你掌握一份会改变势力平衡的黑账索引，但每公开一条都要付出关系代价。",
-    fixedNpcs: "情报贩子白雀；审计官林序；港务安保队长段铮。",
-    resourceSystem: "信用点、关系债、可验证证据。",
-    toneStyle: "冷峻、快节奏、强博弈。",
-    forbiddenRules: "禁止跨城跳场；禁止无代价获得核心证据。",
-    detailMemorySeed: "旧站台编号 N-17 / 断续广播女声 / 倾斜告示牌"
+    openingLine: "",
+    worldSetting: "",
+    playerIdentity: "",
+    primaryGoal: "",
+    coreConflict: "",
+    fixedNpcs: "",
+    resourceSystem: "",
+    toneStyle: "",
+    forbiddenRules: "",
+    detailMemorySeed: ""
   },
   workshopStoryDraft: {
-    openingAnchor: "晨会后竞赛组宣布名额缩减，名单疑似已内定。",
-    endingAnchors: "A 公开翻盘进省队；B 暗线胜出但名声受损；C 保底上岸但错失第一志愿。",
-    fixedNpcs: "林老师（谨慎支持）；顾沉（竞争者）；教务主任（规则守门人）。",
-    scopeLimits: "校园、教务系统、竞赛社群三域；禁止跨城跳场。",
-    primaryGoal: "三个月内进入省队并锁定保送资格。",
-    coreConflict: "规则看似公开，名额却被隐形关系网提前分配。",
-    branchSeeds: "证据线、关系线、成绩线。",
-    pacingHint: "3 回合内给第一次正反馈，8 回合内触发结局分歧。",
-    cluePool: "名额表 / 模考排名 / 竞赛通知"
+    openingAnchor: "",
+    endingAnchors: "",
+    fixedNpcs: "",
+    scopeLimits: "",
+    primaryGoal: "",
+    coreConflict: "",
+    branchSeeds: "",
+    pacingHint: "",
+    cluePool: ""
   },
   workshopCharacterDraft: {
     personaName: "",
@@ -4864,7 +4864,7 @@ function pageWorkshop() {
             <h3>模式编辑器</h3>
             ${
               forceCustom
-                ? `<p class="workshop-feedback">角色卡支持自由创建，不再限制模板。</p>`
+                ? `<p class="workshop-feedback">当前模式支持自由创建，不再限制模板。</p>`
                 : `
               <div class="workshop-input-tabs">
                 ${Object.entries(WORKSHOP_AUTHORING_MODE_META)
@@ -7250,7 +7250,7 @@ document.addEventListener("click", (event) => {
     if (action === "workshop-set-authoring-mode") {
       if (WORKSHOP_FORCE_CUSTOM_MODES.has(uiState.workshopMode)) {
         uiState.workshopAuthoringMode = "custom";
-        uiState.workshopFeedback = "角色卡仅支持自定义创建";
+        uiState.workshopFeedback = "当前模式仅支持自定义创建";
         render();
         return;
       }
@@ -7359,7 +7359,7 @@ document.addEventListener("click", (event) => {
     if (action === "workshop-apply-template") {
       const mode = uiState.workshopMode;
       if (WORKSHOP_FORCE_CUSTOM_MODES.has(mode)) {
-        uiState.workshopFeedback = "角色卡不再使用模板，请直接编辑字段";
+        uiState.workshopFeedback = "当前模式不再使用模板，请直接编辑字段";
         render();
         return;
       }
@@ -7398,7 +7398,7 @@ document.addEventListener("click", (event) => {
       const mode = uiState.workshopMode;
       if (WORKSHOP_FORCE_CUSTOM_MODES.has(mode)) {
         resetWorkshopDraft(mode);
-        uiState.workshopFeedback = "角色卡字段已清空，可自由创建";
+        uiState.workshopFeedback = "当前模式字段已清空，可自由创建";
       } else {
         applyWorkshopTemplate(mode, (WORKSHOP_TEMPLATES[mode] || [])[0]?.id || "");
         uiState.workshopFeedback = "当前模式已重置为默认模板";
