@@ -715,7 +715,7 @@ function pageLogin() {
       <div class="auth-wrap">
         <div class="auth-card">
           <div class="auth-brand auth-brand-center">
-            <div class="auth-logo"><img src="/assets/logo-v3.png" alt="爪马 Logo" /></div>
+            <div class="auth-logo"><img src="/assets/logo-256.png" alt="爪马 Logo" loading="eager" fetchpriority="high" /></div>
             <h2>Drama</h2>
             <p>请选择登录方式</p>
           </div>
@@ -1050,7 +1050,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
       <div class="xh-mobile-shell">
         <div class="xh-mobile-top">
           <div class="xh-mobile-top-left">
-            <img class="xh-mobile-home-logo" src="/assets/logo-v3.png" alt="爪马 Logo" />
+            <img class="xh-mobile-home-logo" src="/assets/logo-256.png" alt="爪马 Logo" loading="eager" fetchpriority="high" />
           </div>
           <div class="xh-mobile-tabs">
             ${mobileTopTabs
@@ -1086,7 +1086,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
 
     <section class="xh-shell ${isMessageFullRoute ? "xh-shell-message" : ""} ${showMobileTopBar ? "mobile-top-visible" : ""} ${isTopNavLinkedRoute ? "top-nav-linked" : ""} ${isBackstageRoute ? "is-backstage-route" : ""}">
       <aside class="xh-left">
-        <div class="xh-logo"><img src="/assets/logo-v3.png" alt="爪马 Logo" /></div>
+        <div class="xh-logo"><img src="/assets/logo-256.png" alt="爪马 Logo" loading="eager" fetchpriority="high" /></div>
         <div class="xh-left-nav">
           ${sideTabs
             .map(
@@ -1379,7 +1379,7 @@ function renderExploreLoginModal() {
         <button class="login-modal-close" data-action="close-login-modal">×</button>
         <div class="login-modal-left">
           <div class="login-bubble">登录后推荐更懂你的内容</div>
-          <div class="login-mini-brand"><img src="/assets/logo-v3.png" alt="爪马 Logo" /><span>爪马 Drama</span></div>
+          <div class="login-mini-brand"><img src="/assets/logo-256.png" alt="爪马 Logo" loading="eager" fetchpriority="high" /><span>爪马 Drama</span></div>
           <div class="login-qr-box">扫码区</div>
           <p>可用 Drama 或 微信扫码</p>
           <small>▶ 如何扫码登录</small>
