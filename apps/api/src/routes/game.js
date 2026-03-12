@@ -1,6 +1,7 @@
 import { json, parseBody } from "../core/http.js";
 import { createGameSession, createTurn, getGameSessionById, getLatestTurnBySessionId } from "../repos/game-repo.js";
 import { getPromptMeta, loadSystemPrompt, runStoryTurn, runStoryTurnStream } from "../services/story-engine.js";
+import { rewriteUserInputForTurn } from "../services/input-rewriter.js";
 
 const memorySessions = new Map();
 const memoryTurns = new Map();
@@ -128,7 +129,8 @@ function getSessionMeta({ session, requestMode, body, latestTurn }) {
 async function persistTurnAndBuildResponse({
   inMemory,
   body,
-  llmResult
+  llmResult,
+  rewriteMeta = null
 }) {
   const actionResult = llmResult.narrativeBlock;
   const stateDelta = llmResult.jsonBlock?.state_delta || {};
@@ -162,6 +164,7 @@ async function persistTurnAndBuildResponse({
     jsonBlock: llmResult.jsonBlock,
     provider: llmResult.provider,
     providerReason: llmResult.providerReason || "",
+    inputAssist: rewriteMeta || null,
     prompt: getPromptMeta(),
     stateDelta,
     round: turn.roundNo
@@ -238,9 +241,21 @@ export async function handleGame(req, res, pathname) {
     sseWrite(res, "ack", { ok: true, turnIndex: nextTurnIndex });
 
     const sessionMeta = getSessionMeta({ session, requestMode, body, latestTurn });
+    const rewriteMeta = await rewriteUserInputForTurn({
+      input: String(body.input),
+      sessionMeta
+    });
+    const effectiveInput = String(rewriteMeta?.effectiveInput || body.input || "");
+    if (rewriteMeta?.rewritten) {
+      sseWrite(res, "notice", {
+        type: "input_rewrite",
+        message: "已将输入补全为可执行行动，再进行生成。",
+        source: rewriteMeta.source || "heuristic"
+      });
+    }
     let llmResult = await runStoryTurnStream({
       turnIndex: nextTurnIndex,
-      input: String(body.input),
+      input: effectiveInput,
       sessionMeta,
       onNarrativeDelta: (text) => {
         if (!text) return;
@@ -271,7 +286,7 @@ export async function handleGame(req, res, pathname) {
         });
         llmResult = await runStoryTurn({
           turnIndex: nextTurnIndex,
-          input: String(body.input),
+          input: effectiveInput,
           sessionMeta,
           options: { maxAttempts: 2 }
         });
@@ -291,7 +306,8 @@ export async function handleGame(req, res, pathname) {
     const response = await persistTurnAndBuildResponse({
       inMemory,
       body,
-      llmResult
+      llmResult,
+      rewriteMeta
     });
     if (!response) {
       sseWrite(res, "error", {
@@ -327,10 +343,16 @@ export async function handleGame(req, res, pathname) {
       : await getLatestTurnBySessionId(body.sessionId);
 
     const nextTurnIndex = Number(session.round_no || 0) + 1;
+    const sessionMeta = getSessionMeta({ session, requestMode, body, latestTurn });
+    const rewriteMeta = await rewriteUserInputForTurn({
+      input: String(body.input),
+      sessionMeta
+    });
+    const effectiveInput = String(rewriteMeta?.effectiveInput || body.input || "");
     const llmResult = await runStoryTurn({
       turnIndex: nextTurnIndex,
-      input: String(body.input),
-      sessionMeta: getSessionMeta({ session, requestMode, body, latestTurn })
+      input: effectiveInput,
+      sessionMeta
     });
 
     if (llmResult?.failed) {
@@ -345,7 +367,8 @@ export async function handleGame(req, res, pathname) {
     const response = await persistTurnAndBuildResponse({
       inMemory,
       body,
-      llmResult
+      llmResult,
+      rewriteMeta
     });
     if (!response) {
       return json(res, 409, { code: "SESSION_UPDATE_FAILED", message: "failed to update session" });
