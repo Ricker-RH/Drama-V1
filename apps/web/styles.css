@@ -12,9 +12,14 @@
   --dark-text: #dbe8ff;
   --primary-grad: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
   --font-family-app: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  --fs-normal: 16px;
-  --fs-medium: 21px;
-  --fs-large: 30px;
+  --fs-normal: 14px;
+  --fs-medium: 18px;
+  --fs-large: 25px;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 * { box-sizing: border-box; }
@@ -11060,8 +11065,24 @@ button {
 
 @media (max-width: 1180px) {
   :root {
-    --fs-normal: 15px;
-    --fs-medium: 19px;
-    --fs-large: 26px;
+    --fs-normal: 13px;
+    --fs-medium: 17px;
+    --fs-large: 22px;
+  }
+}
+
+@media (max-width: 900px) {
+  :root {
+    --fs-normal: 12px;
+    --fs-medium: 15px;
+    --fs-large: 19px;
+  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --fs-normal: 11px;
+    --fs-medium: 14px;
+    --fs-large: 18px;
   }
 }
