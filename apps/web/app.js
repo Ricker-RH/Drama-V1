@@ -45,9 +45,9 @@ const COIN_TASKS = [];
 const COIN_BENEFITS = [];
 let DRAMA_HERO_TOTAL = 1;
 const API_BASE = "/api/v1";
-const BOOTSTRAP_CORE_CACHE_KEY = "drama_bootstrap_core_v3";
-const BOOTSTRAP_FULL_CACHE_PREFIX = "drama_bootstrap_full_v3_";
-const SELECTED_WORLD_ID_CACHE_KEY = "drama_selected_world_id_v3";
+const BOOTSTRAP_CORE_CACHE_KEY = "drama_bootstrap_core_v4";
+const BOOTSTRAP_FULL_CACHE_PREFIX = "drama_bootstrap_full_v4_";
+const SELECTED_WORLD_ID_CACHE_KEY = "drama_selected_world_id_v4";
 const PLAY_RESPONSE_POOL = [];
 const PLAY_IDEA_SUGGESTIONS = [
   "先观察人群动线",
@@ -201,13 +201,19 @@ function clearLegacyClientCaches() {
   try {
     localStorage.removeItem("drama_bootstrap_core_v1");
     localStorage.removeItem("drama_bootstrap_core_v2");
+    localStorage.removeItem("drama_bootstrap_core_v3");
     localStorage.removeItem("drama_selected_world_id_v1");
     localStorage.removeItem("drama_selected_world_id_v2");
+    localStorage.removeItem("drama_selected_world_id_v3");
     const removeKeys = [];
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
       if (!key) continue;
-      if (key.startsWith("drama_bootstrap_full_v1_") || key.startsWith("drama_bootstrap_full_v2_")) {
+      if (
+        key.startsWith("drama_bootstrap_full_v1_")
+        || key.startsWith("drama_bootstrap_full_v2_")
+        || key.startsWith("drama_bootstrap_full_v3_")
+      ) {
         removeKeys.push(key);
       }
     }
