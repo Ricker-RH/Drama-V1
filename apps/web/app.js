@@ -3748,6 +3748,15 @@ function threadViewChanged(prev = [], next = []) {
   return false;
 }
 
+function peerPresenceChanged(prev, next) {
+  const a = prev && typeof prev === "object" ? prev : {};
+  const b = next && typeof next === "object" ? next : {};
+  return (
+    String(a.lastReadAt || "") !== String(b.lastReadAt || "")
+    || Boolean(a.online) !== Boolean(b.online)
+  );
+}
+
 function formatPeerOnlineStatus(peer) {
   if (!peer?.lastReadAt) return "离线";
   if (peer.online) return "在线";
@@ -3774,7 +3783,7 @@ function shouldHeartbeatPresence(conversationId) {
   if (!key) return false;
   const now = Date.now();
   const last = Number(uiState.messagePresenceBeatAt[key] || 0);
-  if (now - last < 4000) return false;
+  if (now - last < 1500) return false;
   uiState.messagePresenceBeatAt[key] = now;
   return true;
 }
@@ -3786,13 +3795,15 @@ async function syncActiveConversationThread() {
   const activeId = getActiveConversationId();
   if (!activeId || !isUuid(activeId)) return false;
   const payload = await fetchThreadMessages(activeId, uiState.currentUserId, 120);
+  const prevPeer = uiState.messagePeerPresence[activeId] || null;
   const rows = payload.messages || [];
   if (payload.peer) {
     uiState.messagePeerPresence[activeId] = payload.peer;
   }
+  const peerChanged = peerPresenceChanged(prevPeer, uiState.messagePeerPresence[activeId] || null);
   const next = toThreadViewMessages(rows, uiState.currentUserId);
   const prev = ensureMessageThread(activeId);
-  if (!threadViewChanged(prev, next)) return false;
+  if (!threadViewChanged(prev, next)) return peerChanged;
   uiState.messageThreads[activeId] = next;
   const latest = next[next.length - 1];
   if (latest?.text) {
@@ -3856,6 +3867,7 @@ async function startOrReuseDirectConversation(targetUserId, targetName = "对方
   if (navigate) {
     uiState.selectedMessageId = conversationId;
     uiState.messageReadAckConversationId = "";
+    uiState.messagePresenceBeatAt[conversationId] = 0;
     uiState.messageThreadAutoScrollOnEnter = true;
     markMessageRead(conversationId);
   }
@@ -8486,9 +8498,7 @@ function scrollThreadToBottom() {
   });
 }
 function ensureMessageRealtimeSync() {
-  const currentHash = window.location.hash || "";
-  const onMessageRoute = currentHash.startsWith("#/messages") && !currentHash.startsWith("#/messages/story");
-  const canSync = onMessageRoute && uiState.isLoggedIn && Boolean(uiState.currentUserId);
+  const canSync = uiState.isLoggedIn && Boolean(uiState.currentUserId);
   if (!canSync && messageRealtimeTimer) {
     clearInterval(messageRealtimeTimer);
     messageRealtimeTimer = undefined;
@@ -8515,6 +8525,8 @@ function ensureMessageRealtimeSync() {
           void markConversationReadOnServer(activeId)
             .then(() => {
               uiState.messageReadAckConversationId = activeId;
+              markMessageRead(activeId);
+              render();
             })
             .catch(() => {
               uiState.messagePresenceBeatAt[activeId] = 0;
@@ -8974,6 +8986,7 @@ document.addEventListener("click", (event) => {
         }
         uiState.selectedMessageId = id;
         uiState.messageReadAckConversationId = "";
+        uiState.messagePresenceBeatAt[id] = 0;
         uiState.messageThreadAutoScrollOnEnter = true;
         markMessageRead(id);
         moveMessageToTop(id);
