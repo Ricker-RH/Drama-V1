@@ -1216,10 +1216,16 @@ function renderSearchPanel(mode = "global") {
 
   return `
     <div class="xh-search-dropdown" data-action="noop">
+        ${
+          isCommunity
+            ? ""
+            : `
         <div class="xh-mobile-search-row">
           <input class="xh-mobile-search-input" value="${escapeHtml(query)}" placeholder="搜索世界/主题/设定/作者" />
           <button data-action="submit-search">搜索</button>
         </div>
+        `
+        }
         <div class="xh-search-block">
           <div class="xh-search-block-head">
             <h4>历史搜索</h4>
