@@ -414,9 +414,12 @@ const uiState = {
   communityCreateTags: "",
   communityCreateDesc: "",
   communityCreateJoinMode: "公开加入",
+  communityCreateAvatar: "",
   communityCreateCover: COMMUNITY_CARD_IMAGES[0],
   communityCreateMaskOpacity: 0.38,
   communityCreatePublishedId: "",
+  communityCreateSubmitting: false,
+  communityCreateError: "",
   communityManageFeedback: "",
   communityJoinedSettings: {
     hideInJoinedList: false,
@@ -4331,6 +4334,77 @@ async function getServerAuthSessionUser() {
   }
 }
 
+function extractRawUrlFromCssUrl(rawValue) {
+  const value = String(rawValue || "").trim();
+  if (!value) return "";
+  const match = value.match(/^url\((['"]?)(.*)\1\)$/i);
+  return match ? String(match[2] || "").trim() : value;
+}
+
+function normalizeCommunityJoinMode(label) {
+  if (label === "审核加入") return "approval";
+  if (label === "仅邀请") return "invite_only";
+  return "public";
+}
+
+async function publishCommunityCreateAndPersist() {
+  const name = String(uiState.communityCreateName || "").trim();
+  const description = String(uiState.communityCreateDesc || "").trim();
+  const rawTags = String(uiState.communityCreateTags || "").trim();
+  if (!name || !description) {
+    uiState.communityCreateError = "请填写社区名称和简介";
+    render();
+    return;
+  }
+  if (!uiState.isLoggedIn || !uiState.currentUserId) {
+    uiState.communityCreateError = "请先登录后再创建社区";
+    setPostLoginRedirectHash("#/community/create");
+    window.location.hash = "#/auth/login";
+    render();
+    return;
+  }
+
+  const tags = rawTags
+    ? rawTags.split(/[、,/，\s]+/).map((x) => String(x || "").trim()).filter(Boolean).slice(0, 8)
+    : ["新社群"];
+  const payload = {
+    ownerId: uiState.currentUserId,
+    name,
+    description,
+    tags,
+    coverUrl: extractRawUrlFromCssUrl(uiState.communityCreateCover),
+    coverMaskOpacity: Number(uiState.communityCreateMaskOpacity || 0.38),
+    joinMode: normalizeCommunityJoinMode(uiState.communityCreateJoinMode),
+    theme: tags[0] || "综合",
+    genderFocus: "不限频向"
+  };
+
+  uiState.communityCreateSubmitting = true;
+  uiState.communityCreateError = "";
+  render();
+  try {
+    const data = await apiJson("/community/communities", payload);
+    const createdId = String(data?.community?.id || "").trim();
+    if (!createdId) throw new Error("创建失败，请稍后重试");
+    await bootstrapClientData(uiState.currentUserId);
+    uiState.selectedCommunityId = createdId;
+    uiState.communityCreatePublishedId = createdId;
+    uiState.communityMyTab = "created";
+    uiState.communityCreateName = "";
+    uiState.communityCreateTags = "";
+    uiState.communityCreateDesc = "";
+    uiState.communityCreateAvatar = "";
+    uiState.communityCreateJoinMode = "公开加入";
+    uiState.communityCreateCover = COMMUNITY_CARD_IMAGES[0];
+    uiState.communityCreateMaskOpacity = 0.38;
+  } catch (error) {
+    uiState.communityCreateError = error instanceof Error ? error.message : "创建失败，请稍后重试";
+  } finally {
+    uiState.communityCreateSubmitting = false;
+    render();
+  }
+}
+
 async function apiSseJson(path, payload, handlers = {}) {
   const controller = new AbortController();
   const timeoutMs = Number.parseInt(String(window?.__PLAY_STREAM_TIMEOUT_MS__ || 90000), 10);
@@ -6893,13 +6967,17 @@ function pageCommunitySearch() {
 
 function pageCommunityCreate() {
   const coverOptions = COMMUNITY_CARD_IMAGES.slice(0, 4);
+  const avatarStyle = uiState.communityCreateAvatar
+    ? ` style="background-image:url('${escapeHtml(uiState.communityCreateAvatar)}');background-size:cover;background-position:center;"`
+    : "";
   return renderExploreShell(`
     <section class="community-page community-form">
       <h2>新增社群</h2>
       <label>群头像</label>
       <div class="row">
-        <div class="community-avatar-placeholder"></div>
-        <button class="community-upload-btn">上传头像</button>
+        <div class="community-avatar-placeholder"${avatarStyle}></div>
+        <button class="community-upload-btn" data-action="community-avatar-upload-trigger">上传头像</button>
+        <input class="community-cover-file-input" type="file" accept="image/*" data-field="community-create-avatar-file" />
         <small>支持 JPG/PNG</small>
       </div>
       <label>社区名称</label>
@@ -6944,7 +7022,8 @@ function pageCommunityCreate() {
         <button class="${uiState.communityCreateJoinMode === "公开加入" ? "active" : ""}" data-action="community-create-join" data-mode="公开加入">公开加入</button>
         <button class="${uiState.communityCreateJoinMode === "审核加入" ? "active" : ""}" data-action="community-create-join" data-mode="审核加入">审核加入</button>
       </div>
-      <button class="dynamic-publish-btn" data-action="publish-community-create">发布社群</button>
+      <button class="dynamic-publish-btn" data-action="publish-community-create" ${uiState.communityCreateSubmitting ? "disabled" : ""}>${uiState.communityCreateSubmitting ? "发布中..." : "发布社群"}</button>
+      ${uiState.communityCreateError ? `<div class="community-empty" style="color:#ef4444;">${escapeHtml(uiState.communityCreateError)}</div>` : ""}
       ${
         uiState.communityCreatePublishedId
           ? `<div class="community-inline-success">✔ 创建成功 <button data-action="open-community-group" data-id="${uiState.communityCreatePublishedId}">去社群</button></div>`
@@ -9950,6 +10029,11 @@ document.addEventListener("click", (event) => {
       if (input instanceof HTMLInputElement) input.click();
       return;
     }
+    if (action === "community-avatar-upload-trigger") {
+      const input = document.querySelector("[data-field='community-create-avatar-file']");
+      if (input instanceof HTMLInputElement) input.click();
+      return;
+    }
     if (action === "community-create-mask") {
       const value = Number(actionTarget.getAttribute("data-value"));
       if (value > 0 && value <= 1) {
@@ -9967,30 +10051,7 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "publish-community-create") {
-      const name = (uiState.communityCreateName || "").trim();
-      const desc = (uiState.communityCreateDesc || "").trim();
-      const rawTags = (uiState.communityCreateTags || "").trim();
-      if (!name || !desc) return;
-      const id = `c_custom_${Date.now()}`;
-      const tags = rawTags ? rawTags.split(/[、,/，\s]+/).filter(Boolean).slice(0, 5) : ["新社群"];
-      COMMUNITY_LIST.unshift({
-        id,
-        name,
-        desc,
-        tags,
-        members: "1人",
-        online: "1",
-        updated: "刚刚",
-        gender: "不限",
-        updatedHours: 0,
-        memberCount: 1,
-        cover: uiState.communityCreateCover,
-        maskOpacity: uiState.communityCreateMaskOpacity
-      });
-      uiState.selectedCommunityId = id;
-      uiState.communityCreatePublishedId = id;
-      uiState.communityMyTab = "created";
-      render();
+      void publishCommunityCreateAndPersist();
       return;
     }
     if (action === "publish-community-post") {
@@ -11534,14 +11595,17 @@ document.addEventListener("input", (event) => {
     }
     if (dynamicField === "community-create-name") {
       uiState.communityCreateName = target.value;
+      if (uiState.communityCreateError) uiState.communityCreateError = "";
       return;
     }
     if (dynamicField === "community-create-tags") {
       uiState.communityCreateTags = target.value;
+      if (uiState.communityCreateError) uiState.communityCreateError = "";
       return;
     }
     if (dynamicField === "community-create-desc") {
       uiState.communityCreateDesc = target.value;
+      if (uiState.communityCreateError) uiState.communityCreateError = "";
       return;
     }
     if (dynamicField === "message-search") {
@@ -11671,7 +11735,7 @@ document.addEventListener("change", (event) => {
   }
   if (!(target instanceof HTMLInputElement)) return;
   const field = target.getAttribute("data-field");
-  if (field !== "community-create-cover-file" && field !== "me-hero-cover-file") return;
+  if (field !== "community-create-cover-file" && field !== "community-create-avatar-file" && field !== "me-hero-cover-file") return;
   const file = target.files?.[0];
   if (!file || !file.type.startsWith("image/")) return;
   const reader = new FileReader();
@@ -11679,9 +11743,14 @@ document.addEventListener("change", (event) => {
     if (typeof reader.result === "string") {
       if (field === "community-create-cover-file") {
         uiState.communityCreateCover = `url("${reader.result}")`;
+      } else if (field === "community-create-avatar-file") {
+        uiState.communityCreateAvatar = reader.result;
       } else {
         uiState.meHeroCover = `url(${reader.result})`;
         uiState.meFeedback = "背景已更新";
+      }
+      if (field === "community-create-cover-file" || field === "community-create-avatar-file") {
+        uiState.communityCreateError = "";
       }
       render();
     }
