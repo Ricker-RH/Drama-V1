@@ -190,11 +190,22 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       query(
         `select
           c.id, c.name, c.description, c.tags, c.member_count, c.last_active_at, c.latest_post_at,
-          c.theme, c.gender_focus, c.cover_url, c.cover_mask_opacity
+          c.theme, c.gender_focus, c.cover_url, c.cover_mask_opacity, c.owner_id,
+          case
+            when $1::uuid is null then false
+            else exists(
+              select 1
+              from community_members cm
+              where cm.community_id = c.id
+                and cm.user_id = $1::uuid
+                and cm.status = 'active'
+            )
+          end as joined_by_me
         from communities c
         where c.status = 'active'
         order by coalesce(c.latest_post_at, c.last_active_at, c.updated_at) desc
-        limit 40`
+        limit 40`,
+        [currentUser?.id || null]
       ),
       query(
         `select title
@@ -271,6 +282,8 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
         gender: row.gender_focus || "不限频向",
         updatedHours,
         memberCount: Number(row.member_count || 0),
+        ownerId: row.owner_id || "",
+        joinedByMe: Boolean(row.joined_by_me),
         cover: row.cover_url ? `url("${row.cover_url}")` : "",
         maskOpacity: Number(row.cover_mask_opacity || 0.36)
       };
@@ -468,11 +481,22 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
   const communityRes = await query(
     `select
       c.id, c.name, c.description, c.tags, c.member_count, c.last_active_at, c.latest_post_at,
-      c.theme, c.gender_focus, c.cover_url, c.cover_mask_opacity
+      c.theme, c.gender_focus, c.cover_url, c.cover_mask_opacity, c.owner_id,
+      case
+        when $1::uuid is null then false
+        else exists(
+          select 1
+          from community_members cm
+          where cm.community_id = c.id
+            and cm.user_id = $1::uuid
+            and cm.status = 'active'
+        )
+      end as joined_by_me
     from communities c
     where c.status = 'active'
     order by coalesce(c.latest_post_at, c.last_active_at, c.updated_at) desc
-    limit 120`
+    limit 120`,
+    [currentUser?.id || null]
   );
   const communityList = communityRes.rows.map((row) => {
     const refTime = row.latest_post_at || row.last_active_at;
@@ -488,6 +512,8 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       gender: row.gender_focus || "不限频向",
       updatedHours,
       memberCount: Number(row.member_count || 0),
+      ownerId: row.owner_id || "",
+      joinedByMe: Boolean(row.joined_by_me),
       cover: row.cover_url ? `url("${row.cover_url}")` : "",
       maskOpacity: Number(row.cover_mask_opacity || 0.36)
     };

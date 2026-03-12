@@ -2224,6 +2224,36 @@ function getSelectedCommunity() {
   return COMMUNITY_LIST.find((x) => x.id === uiState.selectedCommunityId) || COMMUNITY_LIST[0];
 }
 
+function getMyJoinedCommunities() {
+  const uid = String(uiState.currentUserId || "").trim();
+  if (!uid) return [];
+  return COMMUNITY_LIST.filter((x) => Boolean(x?.joinedByMe));
+}
+
+function getMyCreatedCommunities() {
+  const uid = String(uiState.currentUserId || "").trim();
+  if (!uid) return [];
+  return COMMUNITY_LIST.filter((x) => String(x?.ownerId || "").trim() === uid);
+}
+
+function getCommunityMemberPreviewList(community) {
+  const total = Math.max(0, toMetricCount(community?.memberCount || 0));
+  if (total <= 0) return [];
+  if (COMMUNITY_MEMBERS.length >= total) return COMMUNITY_MEMBERS.slice(0, total);
+  const seed = COMMUNITY_MEMBERS.length
+    ? COMMUNITY_MEMBERS
+    : [{ name: "成员", role: "member", intro: "社区成员", color: "#c4b5fd" }];
+  const out = [];
+  for (let i = 0; i < Math.min(total, 24); i += 1) {
+    const base = seed[i % seed.length];
+    out.push({
+      ...base,
+      name: `${base.name}${i + 1}`
+    });
+  }
+  return out;
+}
+
 function getCommunityPosts(cid) {
   return COMMUNITY_POSTS[cid] || [];
 }
@@ -6927,6 +6957,8 @@ function pageCommunityJoin() {
 function pageCommunityMine() {
   const isJoinedTab = uiState.communityMyTab === "joined";
   const manageTarget = isJoinedTab ? "#/community/manage/joined" : "#/community/manage";
+  const mineList = isJoinedTab ? getMyJoinedCommunities() : getMyCreatedCommunities();
+  const emptyText = isJoinedTab ? "你还没有加入社群" : "你还没有创建社群";
   return renderExploreShell(`
     <section class="community-page">
       ${renderCommunityHero("mine")}
@@ -6935,7 +6967,7 @@ function pageCommunityMine() {
         <button class="${uiState.communityMyTab === "joined" ? "active" : ""}" data-action="community-my-tab" data-tab="joined">我加入</button>
         <button class="${uiState.communityMyTab === "created" ? "active" : ""}" data-action="community-my-tab" data-tab="created">我创建</button>
       </div>
-      ${renderCommunityCards(uiState.communityMyTab === "joined" ? COMMUNITY_LIST.slice(5, 11) : COMMUNITY_LIST.slice(0, 4), "你还没有加入社群")}
+      ${renderCommunityCards(mineList, emptyText)}
     </section>
   `);
 }
@@ -7045,11 +7077,15 @@ function pageCommunityCreate() {
 
 function pageCommunityGroup() {
   const c = getSelectedCommunity();
+  if (!c) return pageCommunity();
   const posts = getCommunityPosts(c.id);
+  const previewMembers = getCommunityMemberPreviewList(c);
+  const displayMemberCount = Math.max(0, toMetricCount(c.memberCount || 0));
+  const joinLabel = c.joinedByMe ? "已加入" : "加入";
   const list = uiState.communityGroupTab === "featured" ? posts.filter((p) => p.featured) : posts;
   const activeTabTotal =
     uiState.communityGroupTab === "members"
-      ? COMMUNITY_MEMBERS.length
+      ? displayMemberCount
       : uiState.communityGroupTab === "featured"
         ? posts.filter((p) => p.featured).length
         : posts.length;
@@ -7069,12 +7105,12 @@ function pageCommunityGroup() {
           <div class="community-head-metrics">
             <span>动态 ${posts.length}</span>
             <span>精华 ${posts.filter((p) => p.featured).length}</span>
-            <span>成员 ${COMMUNITY_MEMBERS.length}</span>
+            <span>成员 ${displayMemberCount}</span>
             <span>讨论热度 +12%</span>
           </div>
         </div>
         <div class="actions">
-          <button class="ghost">已加入</button>
+          <button class="ghost">${joinLabel}</button>
           <button class="primary" data-go="#/community/group/post">发动态</button>
         </div>
       </article>
@@ -7090,7 +7126,7 @@ function pageCommunityGroup() {
         uiState.communityGroupTab === "members"
           ? `
         <div class="community-member-list">
-          ${COMMUNITY_MEMBERS.map((m) => `
+          ${previewMembers.map((m) => `
             <article class="community-member-item">
               <span class="avatar user-avatar-click" style="background:${m.color}">${m.name.slice(0,1)}</span>
               <div><h4>${m.name} · ${m.role}</h4><p>${m.intro}</p></div>
