@@ -5114,13 +5114,13 @@ code {
 .theater-feed-grid {
   display: block;
   columns: 5;
-  column-gap: 10px;
+  column-gap: 6px;
 }
 
 .theater-feed-grid .home-card {
   width: 100%;
   display: inline-block;
-  margin: 0 0 10px;
+  margin: 0 0 6px;
   break-inside: avoid;
 }
 
