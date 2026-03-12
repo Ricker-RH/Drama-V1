@@ -511,7 +511,7 @@ function getDefaultWorldCard() {
   };
 }
 
-function applyBootstrapData(payload) {
+function applyBootstrapData(payload, sourceMode = "unknown") {
   replaceArray(FEED_DATA, payload?.feedData || []);
   replaceArray(DRAMA_STORY_IMAGES, payload?.dramaStoryImages || []);
   replaceArray(DYNAMIC_FEED, payload?.dynamicFeed || []);
@@ -531,10 +531,27 @@ function applyBootstrapData(payload) {
   const history = payload?.search?.history || [];
   uiState.searchHistory = [...history];
   uiState.communitySearchHistory = [...history];
-  ME_CONTENT_LIBRARY.works = payload?.me?.contentLibrary?.works || [];
-  ME_CONTENT_LIBRARY.likes = payload?.me?.contentLibrary?.likes || [];
-  ME_CONTENT_LIBRARY.favorites = payload?.me?.contentLibrary?.favorites || [];
-  ME_CONTENT_LIBRARY.history = payload?.me?.contentLibrary?.history || [];
+  const incomingLibrary = payload?.me?.contentLibrary || {};
+  const incomingWorks = Array.isArray(incomingLibrary.works) ? incomingLibrary.works : null;
+  const incomingLikes = Array.isArray(incomingLibrary.likes) ? incomingLibrary.likes : null;
+  const incomingFavorites = Array.isArray(incomingLibrary.favorites) ? incomingLibrary.favorites : null;
+  const incomingHistory = Array.isArray(incomingLibrary.history) ? incomingLibrary.history : null;
+  if (sourceMode === "full") {
+    ME_CONTENT_LIBRARY.works = incomingWorks || [];
+    ME_CONTENT_LIBRARY.likes = incomingLikes || [];
+    ME_CONTENT_LIBRARY.favorites = incomingFavorites || [];
+    ME_CONTENT_LIBRARY.history = incomingHistory || [];
+  } else {
+    if (!Array.isArray(ME_CONTENT_LIBRARY.works)) ME_CONTENT_LIBRARY.works = [];
+    if (!Array.isArray(ME_CONTENT_LIBRARY.likes)) ME_CONTENT_LIBRARY.likes = [];
+    if (!Array.isArray(ME_CONTENT_LIBRARY.favorites)) ME_CONTENT_LIBRARY.favorites = [];
+    if (!Array.isArray(ME_CONTENT_LIBRARY.history)) ME_CONTENT_LIBRARY.history = [];
+    // core bootstrap may carry placeholder empty arrays; avoid wiping the full-view cache in "我的"
+    if (incomingWorks && incomingWorks.length > 0) ME_CONTENT_LIBRARY.works = incomingWorks;
+    if (incomingLikes && incomingLikes.length > 0) ME_CONTENT_LIBRARY.likes = incomingLikes;
+    if (incomingFavorites && incomingFavorites.length > 0) ME_CONTENT_LIBRARY.favorites = incomingFavorites;
+    if (incomingHistory && incomingHistory.length > 0) ME_CONTENT_LIBRARY.history = incomingHistory;
+  }
   DRAMA_HERO_TOTAL = Math.max(1, Math.min(3, FEED_DATA.length));
 
   const me = payload?.user;
@@ -559,6 +576,10 @@ function applyBootstrapData(payload) {
     uiState.isLoggedIn = false;
     uiState.currentUserId = "";
     uiState.userCoins = 0;
+    ME_CONTENT_LIBRARY.works = [];
+    ME_CONTENT_LIBRARY.likes = [];
+    ME_CONTENT_LIBRARY.favorites = [];
+    ME_CONTENT_LIBRARY.history = [];
     uiState.workshopCardsLoadedForUser = "";
     uiState.workshopSavedCards = [];
     uiState.workshopActiveCardId = "";
@@ -609,7 +630,7 @@ async function bootstrapClientData() {
   const resp = await fetch(`${API_BASE}/bootstrap?mode=core`);
   if (!resp.ok) throw new Error(`BOOTSTRAP_HTTP_${resp.status}`);
   const data = await resp.json();
-  applyBootstrapData(data);
+  applyBootstrapData(data, "core");
   try {
     localStorage.setItem(BOOTSTRAP_CORE_CACHE_KEY, JSON.stringify(data));
   } catch {}
@@ -620,7 +641,7 @@ async function bootstrapClientDataFull(userId = uiState.currentUserId || "") {
   const resp = await fetch(`${API_BASE}/bootstrap${query}`);
   if (!resp.ok) throw new Error(`BOOTSTRAP_FULL_HTTP_${resp.status}`);
   const data = await resp.json();
-  applyBootstrapData(data);
+  applyBootstrapData(data, "full");
   try {
     if (userId) {
       localStorage.setItem(`${BOOTSTRAP_FULL_CACHE_PREFIX}${userId}`, JSON.stringify(data));
@@ -635,7 +656,7 @@ function tryHydrateFullCache(userId = uiState.currentUserId || "") {
     if (!raw) return false;
     const cached = JSON.parse(raw);
     if (!cached || typeof cached !== "object") return false;
-    applyBootstrapData(cached);
+    applyBootstrapData(cached, "full");
     uiState.bootstrapFullLoaded = true;
     return true;
   } catch {
@@ -649,7 +670,7 @@ function tryHydrateFromCache() {
     if (!raw) return false;
     const cached = JSON.parse(raw);
     if (!cached || typeof cached !== "object") return false;
-    applyBootstrapData(cached);
+    applyBootstrapData(cached, "core");
     return true;
   } catch {
     return false;
@@ -3766,7 +3787,7 @@ async function loginWithAccountAndSync() {
     const boot = await fetch(`${API_BASE}/bootstrap?mode=full&userId=${encodeURIComponent(data.user.id)}`);
     if (!boot.ok) throw new Error(`BOOTSTRAP_${boot.status}`);
     const payload = await boot.json();
-    applyBootstrapData(payload);
+    applyBootstrapData(payload, "full");
     uiState.bootstrapFullLoaded = true;
     try {
       localStorage.setItem(`${BOOTSTRAP_FULL_CACHE_PREFIX}${data.user.id}`, JSON.stringify(payload));

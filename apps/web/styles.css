@@ -5114,14 +5114,20 @@ code {
 .theater-feed-grid {
   display: block;
   columns: 5;
-  column-gap: 6px;
+  column-gap: 4px;
+  margin-top: 6px;
+  margin-inline: -6px;
 }
 
 .theater-feed-grid .home-card {
   width: 100%;
   display: inline-block;
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   break-inside: avoid;
+}
+
+.theater-feed-grid .home-body {
+  padding: 8px 9px 9px;
 }
 
 .drama-home,
