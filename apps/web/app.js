@@ -971,7 +971,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
   ];
   const showHeadSearch = (!isCommunityRoute && !isMessageRoute && !isMeRoute && !isWorkshopRoute) || currentHash === "#/community/search";
   const isSearchResultRoute = currentHash === "#/search/results" || currentHash === "#/community/search";
-  const isHomeRoute = currentHash === "#/theater/home" || currentHash === "#/theater";
+  const showHeadCoin = isMeRoute;
   const noBackOn = new Set([
     "#/theater/home",
     "#/theater",
@@ -1054,9 +1054,9 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
           <div class="xh-mobile-right">
             <button class="xh-mobile-top-search-btn ${activeSearchPanelOpen ? "active" : ""}" data-action="open-search-panel" aria-label="搜索">⌕</button>
             ${
-              isHomeRoute
-                ? ""
-                : `<button class="xh-coin-chip" data-go="#/me/coins">🪙 ${(uiState.isLoggedIn ? uiState.userCoins : 0).toLocaleString()}</button>`
+              showHeadCoin
+                ? `<button class="xh-coin-chip" data-go="#/me/coins">🪙 ${(uiState.isLoggedIn ? uiState.userCoins : 0).toLocaleString()}</button>`
+                : ""
             }
           </div>
         </div>
@@ -1116,9 +1116,9 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
         <div class="xh-head">
           <div class="xh-head-links">
             ${
-              isHomeRoute
-                ? ""
-                : `<button class="xh-coin-chip" data-go="#/me/coins">🪙 ${(uiState.isLoggedIn ? uiState.userCoins : 0).toLocaleString()}</button>`
+              showHeadCoin
+                ? `<button class="xh-coin-chip" data-go="#/me/coins">🪙 ${(uiState.isLoggedIn ? uiState.userCoins : 0).toLocaleString()}</button>`
+                : ""
             }
             ${
               uiState.isLoggedIn
