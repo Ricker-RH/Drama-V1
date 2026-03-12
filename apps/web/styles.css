@@ -8977,7 +8977,7 @@ code {
   .search-mobile-global-field .xh-search-submit {
     width: auto;
     min-width: 44px;
-    font-size: 14px;
+    font-size: 14px !important;
     font-weight: 700;
     color: #5b21b6;
   }
