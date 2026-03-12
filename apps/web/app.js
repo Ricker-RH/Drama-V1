@@ -1086,7 +1086,21 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
   const isMobileMessageActive = currentHash.startsWith("#/messages/") && !isBackstageRoute && currentHash !== "#/messages/detail";
   const isMobilePlazaActive = currentHash.startsWith("#/theater") || currentHash.startsWith("#/world") || currentHash.startsWith("#/author") || currentHash.startsWith("#/search");
   const isMobileCommunityActive = currentHash.startsWith("#/community");
-  const hideMobileBottomNav = currentHash === "#/messages/thread";
+  const bottomNavVisibleRoutes = new Set([
+    "#/theater/home",
+    "#/theater",
+    "#/drama/home",
+    "#/drama/rank",
+    "#/drama/reserve",
+    "#/messages/chat",
+    "#/messages/story",
+    "#/community/home",
+    "#/community/join",
+    "#/community/mine",
+    "#/community/group",
+    "#/me/home"
+  ]);
+  const hideMobileBottomNav = !bottomNavVisibleRoutes.has(currentHash);
   const isMobileMeActive = currentHash === "#/me/home" || currentHash.startsWith("#/me/");
   const isMobileWorkshopActive = currentHash.startsWith("#/workshop");
   const isTopNavLinkedRoute = isBackstageRoute || currentHash === "#/theater/home" || currentHash === "#/theater";
@@ -3265,18 +3279,6 @@ function pageWorldDetail() {
           <button class="world-hero-share" data-action="open-world-share" aria-label="分享">分享</button>
         </div>
         <img src="${currentSlide}" alt="${world.title}" />
-        <div class="world-carousel-actions">
-          <button data-action="carousel-prev">‹</button>
-          <div class="world-carousel-dots">
-            ${heroSlides
-              .map(
-                (_, i) =>
-                  `<span class="${i === uiState.worldCarouselIndex ? "active" : ""}" data-action="carousel-goto" data-index="${i}"></span>`
-              )
-              .join("")}
-          </div>
-          <button data-action="carousel-next">›</button>
-        </div>
         <div class="world-hero-copy">
           <h1>${world.title}</h1>
           <p class="world-statline">${escapeHtml(profile.statline)}</p>
@@ -3313,6 +3315,18 @@ function pageWorldDetail() {
                 >${authorFollowed ? "✓ 已关注" : "＋ 关注"}</button>
               `
               }
+              <div class="world-carousel-actions world-carousel-actions-inline">
+                <button data-action="carousel-prev">‹</button>
+                <div class="world-carousel-dots">
+                  ${heroSlides
+                    .map(
+                      (_, i) =>
+                        `<span class="${i === uiState.worldCarouselIndex ? "active" : ""}" data-action="carousel-goto" data-index="${i}"></span>`
+                    )
+                    .join("")}
+                </div>
+                <button data-action="carousel-next">›</button>
+              </div>
             </div>
           </section>
         </div>
@@ -4781,10 +4795,12 @@ async function submitPlayTurn(actionText, options = {}) {
     let finalResponse = null;
     let streamBuffer = "";
     let streamFlushTimer = 0;
+    let streamedSnapshot = "";
     const flushStreamBuffer = () => {
       if (!streamBuffer) return;
       streamingEntry.text = `${streamingEntry.text === "..." ? "" : streamingEntry.text}${streamBuffer}`;
       streamBuffer = "";
+      streamedSnapshot = String(streamingEntry.text || "").trim();
       render();
     };
     await apiSseJson(
@@ -4822,8 +4838,15 @@ async function submitPlayTurn(actionText, options = {}) {
     if (requestNonce !== uiState.playRequestNonce) return;
     if (String(getSelectedWorld()?.id || "") !== requestWorldId) return;
     clearPlayPendingEntries();
+    const streamedText = String(streamingEntry.text || streamedSnapshot || "").trim();
     uiState.playEntries = uiState.playEntries.filter((x) => x !== streamingEntry);
     const response = finalResponse || {};
+    if (!response?.actionResult && streamedText && streamedText !== "...") {
+      uiState.playEntries.push({ type: "narrator", text: streamedText });
+      if (autoOpening) uiState.playAutoOpeningRequested = true;
+      showPlaySystemHint("已保留流式正文，结构化字段将在下一回合继续补全。");
+      return;
+    }
     if (!response?.actionResult) throw new Error("STREAM_EMPTY_RESULT");
     const entries = parseNarrativeToEntries(response.actionResult);
     const promptData = extractPlayPromptFromResponse(response.actionResult, response.jsonBlock, getSelectedWorld());
@@ -4846,7 +4869,12 @@ async function submitPlayTurn(actionText, options = {}) {
     if (requestNonce !== uiState.playRequestNonce) return;
     if (String(getSelectedWorld()?.id || "") !== requestWorldId) return;
     clearPlayPendingEntries();
+    const streamedText = String(streamingEntry.text || "").trim();
     uiState.playEntries = uiState.playEntries.filter((x) => x !== streamingEntry);
+    if (streamedText && streamedText !== "...") {
+      uiState.playEntries.push({ type: "narrator", text: streamedText });
+      showPlaySystemHint("已保留本回合已生成内容。");
+    }
     try {
       const sessionId = await ensurePlaySession();
       const data = await apiJson("/game/turns", { sessionId, input, mode: storyContext.mode, storyContext });

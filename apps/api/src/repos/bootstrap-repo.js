@@ -35,6 +35,69 @@ function toClock(dateLike) {
   return `${hh}:${mm}`;
 }
 
+async function buildAuthorDirectory(authorIds = [], viewerId = null) {
+  const ids = Array.from(new Set((Array.isArray(authorIds) ? authorIds : []).filter(Boolean)));
+  if (!ids.length) return {};
+  const res = await query(
+    `select
+      u.id,
+      u.nickname,
+      coalesce(up.extra->>'handle', '@'||replace(lower(u.nickname), ' ', '_')) as handle,
+      coalesce(u.bio, '') as bio,
+      coalesce(fans.cnt, 0) as fans_count,
+      coalesce(follows.cnt, 0) as follows_count,
+      coalesce(works.cnt, 0) as works_count,
+      case
+        when $2::uuid is null then false
+        else exists(
+          select 1
+          from user_follows uf
+          where uf.follower_id = $2::uuid
+            and uf.following_id = u.id
+            and uf.status = 'active'
+        )
+      end as followed_by_me
+    from users u
+    left join user_profiles up on up.user_id = u.id
+    left join (
+      select following_id, count(*) as cnt
+      from user_follows
+      where status='active'
+      group by following_id
+    ) fans on fans.following_id = u.id
+    left join (
+      select follower_id, count(*) as cnt
+      from user_follows
+      where status='active'
+      group by follower_id
+    ) follows on follows.follower_id = u.id
+    left join (
+      select author_id, count(*) as cnt
+      from world_cards
+      where publish_status='published'
+      group by author_id
+    ) works on works.author_id = u.id
+    where u.id = any($1::uuid[])`,
+    [ids, viewerId || null]
+  );
+  const out = {};
+  res.rows.forEach((row) => {
+    out[row.id] = {
+      id: row.id,
+      name: row.nickname || "匿名作者",
+      handle: row.handle || "",
+      bio: row.bio || "",
+      followedByMe: Boolean(row.followed_by_me),
+      stats: {
+        fansCount: Number(row.fans_count || 0),
+        followsCount: Number(row.follows_count || 0),
+        worksCount: Number(row.works_count || 0)
+      }
+    };
+  });
+  return out;
+}
+
 export async function getBootstrapPayload(userId = null, mode = "core") {
   const userRes = await query(
     `select
@@ -81,7 +144,8 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
               and wi.interaction_type = 'favorite'
           ) as favorited_by_me,
           coalesce(array_remove(array_agg(distinct wt.tag), null), '{}'::text[]) as tags,
-          coalesce(u.nickname, '匿名作者') as author
+          coalesce(u.nickname, '匿名作者') as author,
+          u.id as author_id
         from world_cards w
         left join world_card_stats ws on ws.world_card_id = w.id
         left join users u on u.id = w.author_id
@@ -153,6 +217,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       overview: row.overview || "",
       tags: row.tags?.length ? row.tags.slice(0, 3) : [row.theme || "剧情向"],
       author: row.author,
+      authorId: row.author_id || "",
       mode: row.mode || "long_narrative",
       chapter: row.chapter_label || "序幕",
       mainQuest: row.main_quest || "",
@@ -171,6 +236,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       liked: Boolean(row.liked_by_me),
       favorited: Boolean(row.favorited_by_me)
     }));
+    const authors = await buildAuthorDirectory(feedData.map((x) => x.authorId), currentUser?.id || null);
     const dramaStoryImages = worldMediaRes.rows.map((r) => r.media_url).filter(Boolean);
     const dynamicTabs = ["推荐", "关注", "发现"];
     const dynamicFeed = dynamicRes.rows.map((row, idx) => ({
@@ -221,6 +287,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
           }
         : null,
       feedData,
+      authors,
       dramaStoryImages,
       dynamicFeed,
       communityList,
@@ -235,6 +302,11 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       me: {
         contentLibrary: { works: [], likes: [], favorites: [], history: [] },
         relationUsers: [],
+        stats: {
+          storyCount: 0,
+          likedCount: 0,
+          fansCount: 0
+        },
         coinBills: [],
         coinTasks: [],
         coinBenefits: []
@@ -288,7 +360,8 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
           and wi.interaction_type = 'favorite'
       ) as favorited_by_me,
       coalesce(array_remove(array_agg(distinct wt.tag), null), '{}'::text[]) as tags,
-      coalesce(u.nickname, '匿名作者') as author
+      coalesce(u.nickname, '匿名作者') as author,
+      u.id as author_id
     from world_cards w
     left join world_card_stats ws on ws.world_card_id = w.id
     left join users u on u.id = w.author_id
@@ -313,6 +386,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
     overview: row.overview || "",
     tags: row.tags?.length ? row.tags.slice(0, 3) : [row.theme || "剧情向"],
     author: row.author,
+    authorId: row.author_id || "",
     mode: row.mode || "long_narrative",
     chapter: row.chapter_label || "序幕",
     mainQuest: row.main_quest || "",
@@ -331,6 +405,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
     liked: Boolean(row.liked_by_me),
     favorited: Boolean(row.favorited_by_me)
   }));
+  const authors = await buildAuthorDirectory(feedData.map((x) => x.authorId), currentUser?.id || null);
 
   const worldMediaRes = await query(
     `select media_url
@@ -462,6 +537,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
           }
         : null,
       feedData,
+      authors,
       dramaStoryImages,
       dynamicFeed,
       communityList,
@@ -476,6 +552,46 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       me: {
         contentLibrary: { works: [], likes: [], favorites: [], history: [] },
         relationUsers: [],
+        stats: {
+          storyCount: 0,
+          likedCount: 0,
+          fansCount: 0
+        },
+        coinBills: [],
+        coinTasks: [],
+        coinBenefits: []
+      },
+      search: {
+        hotTerms: [],
+        history: []
+      }
+    };
+  }
+
+  if (!currentUser) {
+    return {
+      user: null,
+      feedData,
+      authors,
+      dramaStoryImages,
+      dynamicFeed,
+      communityList,
+      communityPosts,
+      messages: {
+        inbox: [],
+        likes: [],
+        follows: [],
+        comments: [],
+        threads: {}
+      },
+      me: {
+        contentLibrary: { works: [], likes: [], favorites: [], history: [] },
+        relationUsers: [],
+        stats: {
+          storyCount: 0,
+          likedCount: 0,
+          fansCount: 0
+        },
         coinBills: [],
         coinTasks: [],
         coinBenefits: []
@@ -494,12 +610,20 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       `select
         c.id,
         c.biz_type,
-        c.title,
+        case
+          when c.conversation_type = 'private' then coalesce(uo.nickname, c.title, '私聊会话')
+          else c.title
+        end as title,
         c.last_message_at,
         coalesce(cm.unread_count, 0) as unread_count,
         coalesce(m.content, '') as preview
       from conversation_members cm
       join conversations c on c.id = cm.conversation_id
+      left join conversation_members cmo
+        on cmo.conversation_id = c.id
+       and cmo.user_id <> $1
+       and cmo.deleted_at is null
+      left join users uo on uo.id = cmo.user_id
       left join messages m on m.id = c.last_message_id
       where cm.user_id = $1 and cm.deleted_at is null
       order by coalesce(c.last_message_at, c.updated_at) desc
@@ -545,6 +669,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
 
   const likesRes = await query(
     `select n.id, n.title, n.content, n.created_at, n.target_id, wc.cover_url,
+            a.id as actor_id,
             coalesce(a.nickname, '玩家') as actor_name
      from notifications n
      left join users a on a.id = n.actor_id
@@ -557,6 +682,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
   );
   const messageLikes = likesRes.rows.map((row) => ({
     id: row.id,
+    userId: row.actor_id || "",
     user: row.actor_name,
     date: toClock(row.created_at),
     action: row.title || "赞了你的内容",
@@ -566,7 +692,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
   }));
 
   const followsRes = await query(
-    `select n.id, n.content, n.created_at, coalesce(a.nickname, '玩家') as actor_name
+    `select n.id, n.content, n.created_at, a.id as actor_id, coalesce(a.nickname, '玩家') as actor_name
      from notifications n
      left join users a on a.id = n.actor_id
      where ($1::uuid is null or n.user_id = $1::uuid)
@@ -577,6 +703,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
   );
   const messageNewFollows = followsRes.rows.map((row) => ({
     id: row.id,
+    userId: row.actor_id || "",
     user: row.actor_name,
     date: toClock(row.created_at),
     intro: row.content || `${row.actor_name} 开始关注你了`,
@@ -698,14 +825,72 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
     history: []
   };
 
-  const relationRes = await query(
+  const meStatsRes = await query(
     `select
+      coalesce((
+        select count(*)
+        from creator_cards c
+        where c.author_id = $1::uuid
+          and c.deleted_at is null
+      ), 0) as story_count,
+      (
+        coalesce((
+          select sum(coalesce(ws.likes_count, 0))
+          from world_cards w
+          left join world_card_stats ws on ws.world_card_id = w.id
+          where w.author_id = $1::uuid
+            and w.publish_status = 'published'
+        ), 0)
+        + coalesce((
+          select sum(coalesce(p.likes_count, 0))
+          from posts p
+          where p.author_id = $1::uuid
+            and p.status = 'published'
+        ), 0)
+        + coalesce((
+          select sum(coalesce(cp.likes_count, 0))
+          from community_posts cp
+          where cp.author_id = $1::uuid
+            and cp.status = 'active'
+        ), 0)
+      ) as liked_count,
+      coalesce((
+        select count(*)
+        from user_follows uf
+        where uf.following_id = $1::uuid
+          and uf.status = 'active'
+      ), 0) as fans_count`,
+    [currentUser?.id || null]
+  );
+  const meStatsRow = meStatsRes.rows[0] || {};
+
+  const relationRes = await query(
+    `with rel as (
+      select
+        t.uid,
+        max(case when t.rel = 'fan' then 1 else 0 end) as is_fan,
+        max(case when t.rel = 'following' then 1 else 0 end) as is_following
+      from (
+        select uf.follower_id as uid, 'fan' as rel
+        from user_follows uf
+        where uf.following_id = $1::uuid and uf.status = 'active'
+        union all
+        select uf.following_id as uid, 'following' as rel
+        from user_follows uf
+        where uf.follower_id = $1::uuid and uf.status = 'active'
+      ) t
+      group by t.uid
+    )
+    select
       u.id,
       u.nickname,
       coalesce(up.extra->>'handle', '@'||replace(lower(u.nickname), ' ', '_')) as handle,
       u.bio,
-      coalesce(fc.cnt, 0) as fans
-    from users u
+      coalesce(fc.cnt, 0) as fans,
+      rel.is_fan,
+      rel.is_following
+    from rel
+    join users u on u.id = rel.uid
     left join user_profiles up on up.user_id = u.id
     left join (
       select following_id, count(*) as cnt
@@ -713,17 +898,25 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       where status='active'
       group by following_id
     ) fc on fc.following_id = u.id
-    order by fans desc, u.created_at desc
-    limit 60`
+    order by (rel.is_fan + rel.is_following) desc, fans desc, u.created_at desc
+    limit 200`,
+    [currentUser.id]
   );
-  const meRelationUsers = relationRes.rows.map((x, idx) => ({
-    id: x.id,
-    name: x.nickname,
-    handle: x.handle,
-    intro: x.bio || "Drama 玩家",
-    fans: formatCompactNumber(x.fans),
-    tab: idx % 3 === 0 ? "关注" : idx % 3 === 1 ? "粉丝" : "朋友"
-  }));
+  const meRelationUsers = relationRes.rows.map((x) => {
+    const isFan = Boolean(Number(x.is_fan || 0));
+    const isFollowing = Boolean(Number(x.is_following || 0));
+    const tab = isFan && isFollowing ? "朋友" : isFan ? "粉丝" : "关注";
+    return {
+      id: x.id,
+      name: x.nickname,
+      handle: x.handle,
+      intro: x.bio || "Drama 玩家",
+      fans: formatCompactNumber(x.fans),
+      tab,
+      isFan,
+      isFollowing
+    };
+  });
 
   const coinBillsRes = await query(
     `select id, change_amount, created_at, remark, biz_type
@@ -738,6 +931,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
     type: Number(x.change_amount) >= 0 ? "income" : "expense",
     title: x.biz_type || "账单",
     amount: Number(x.change_amount),
+    createdAt: x.created_at,
     time: formatTimeText(x.created_at),
     desc: x.remark || ""
   }));
@@ -813,6 +1007,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
         }
       : null,
     feedData,
+    authors,
     dramaStoryImages,
     dynamicFeed,
     communityList,
@@ -827,6 +1022,11 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
     me: {
       contentLibrary: meContentLibrary,
       relationUsers: meRelationUsers,
+      stats: {
+        storyCount: Number(meStatsRow.story_count || 0),
+        likedCount: Number(meStatsRow.liked_count || 0),
+        fansCount: Number(meStatsRow.fans_count || 0)
+      },
       coinBills,
       coinTasks,
       coinBenefits

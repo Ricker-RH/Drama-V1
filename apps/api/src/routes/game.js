@@ -139,6 +139,19 @@ function isRepeatRollbackQualityFailure(llmResult) {
   );
 }
 
+function toPartialTurnFromFailedResult(llmResult, source = "fallback") {
+  const streamedNarrative = String(llmResult?.narrativeBlock || "").trim();
+  if (!streamedNarrative) return null;
+  const reason = String(llmResult?.providerReason || "");
+  return {
+    failed: false,
+    jsonBlock: llmResult?.jsonBlock || {},
+    narrativeBlock: streamedNarrative,
+    provider: llmResult?.provider || "openai",
+    providerReason: `${source}:${reason.slice(0, 180)}`
+  };
+}
+
 function sseWrite(res, event, payload) {
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -306,11 +319,13 @@ export async function handleGame(req, res, pathname) {
       const reason = String(llmResult?.providerReason || "");
       const qualityFailed = /quality_gate_failed/i.test(reason);
       const hardRepeatRollback = qualityFailed && isRepeatRollbackQualityFailure(llmResult);
-      if (streamedNarrative && (!qualityFailed || !hardRepeatRollback)) {
+      if (streamedNarrative) {
         sseWrite(res, "notice", {
           type: "stream_partial_commit",
-          message: qualityFailed
-            ? "已使用流式正文完成本回合（已忽略非阻断质量告警），结构化字段将下回合继续校正"
+          message: hardRepeatRollback
+            ? "已保留本回合已生成正文并完成落库，建议下回合使用更具体动作推进"
+            : qualityFailed
+              ? "已使用流式正文完成本回合（已忽略非阻断质量告警），结构化字段将下回合继续校正"
             : "已使用流式正文完成本回合，结构化字段将下回合继续校正"
         });
         llmResult = {
@@ -401,12 +416,16 @@ export async function handleGame(req, res, pathname) {
     });
 
     if (llmResult?.failed) {
-      return json(res, 502, {
-        code: "LLM_TURN_FAILED",
-        message: toUserFacingTurnError(llmResult),
-        reason: llmResult.providerReason || "llm turn generation failed",
-        provider: llmResult.provider || "error"
-      });
+      const partialResult = toPartialTurnFromFailedResult(llmResult, "non_stream_partial_commit");
+      if (!partialResult) {
+        return json(res, 502, {
+          code: "LLM_TURN_FAILED",
+          message: toUserFacingTurnError(llmResult),
+          reason: llmResult.providerReason || "llm turn generation failed",
+          provider: llmResult.provider || "error"
+        });
+      }
+      llmResult = partialResult;
     }
 
     const response = await persistTurnAndBuildResponse({

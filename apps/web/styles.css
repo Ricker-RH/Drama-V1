@@ -6876,6 +6876,19 @@ body.world-detail-route .layout.explore-mode .content {
   background: #fff;
 }
 
+.world-carousel-actions-inline {
+  position: static;
+  right: auto;
+  bottom: auto;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.world-carousel-actions-inline button {
+  font-size: 30px;
+  padding: 0;
+}
+
 .world-hero h1 {
   margin: 0;
   font-size: 34px;
