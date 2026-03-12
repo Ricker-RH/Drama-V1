@@ -52,7 +52,6 @@ const SELECTED_WORLD_ID_CACHE_KEY = "drama_selected_world_id_v4";
 const AUTH_USER_ID_SESSION_KEY = "drama_auth_session_v3";
 const AUTH_USER_ID_LEGACY_LOCAL_KEY = "drama_auth_user_id_v1";
 const AUTH_REDIRECT_HASH_KEY = "drama_auth_redirect_hash_v1";
-const AUTH_TTL_MS = 30 * 60 * 1000;
 const AUTH_PUBLIC_ROUTES = new Set(["#/auth/login"]);
 const WORLD_INTERACTION_CACHE_PREFIX = "drama_world_interactions_v1_";
 const WORLD_REACTION_PENDING_PREFIX = "drama_world_reaction_pending_v1_";
@@ -789,49 +788,20 @@ function triggerWorldActionFx(type, duration = 620) {
 
 function persistAuthUserId() {
   try {
-    const id = String(uiState.currentUserId || "").trim();
-    if (!id) {
-      sessionStorage.removeItem(AUTH_USER_ID_SESSION_KEY);
-      sessionStorage.removeItem(AUTH_REDIRECT_HASH_KEY);
-      localStorage.removeItem(AUTH_USER_ID_LEGACY_LOCAL_KEY);
-      uiState.authLoginAt = 0;
-      return;
-    }
-    let loginAt = Number(uiState.authLoginAt || 0);
-    if (!Number.isFinite(loginAt) || loginAt <= 0) {
-      try {
-        const raw = sessionStorage.getItem(AUTH_USER_ID_SESSION_KEY);
-        const prev = raw ? JSON.parse(raw) : null;
-        if (String(prev?.userId || "").trim() === id) {
-          loginAt = Number(prev?.loginAt || 0);
-        }
-      } catch {}
-    }
-    if (!Number.isFinite(loginAt) || loginAt <= 0) loginAt = Date.now();
-    uiState.authLoginAt = loginAt;
-    sessionStorage.setItem(AUTH_USER_ID_SESSION_KEY, JSON.stringify({ userId: id, loginAt }));
+    if (uiState.currentUserId) return;
+    sessionStorage.removeItem(AUTH_USER_ID_SESSION_KEY);
+    sessionStorage.removeItem(AUTH_REDIRECT_HASH_KEY);
     localStorage.removeItem(AUTH_USER_ID_LEGACY_LOCAL_KEY);
+    uiState.authLoginAt = 0;
   } catch {}
 }
 
 function hydrateAuthUserId() {
   try {
-    const raw = sessionStorage.getItem(AUTH_USER_ID_SESSION_KEY);
-    if (!raw) return "";
-    const parsed = JSON.parse(raw);
-    const userId = String(parsed?.userId || "").trim();
-    const loginAt = Number(parsed?.loginAt || 0);
-    if (!userId || !Number.isFinite(loginAt) || loginAt <= 0) {
-      sessionStorage.removeItem(AUTH_USER_ID_SESSION_KEY);
-      return "";
-    }
-    if (Date.now() - loginAt > AUTH_TTL_MS) {
-      sessionStorage.removeItem(AUTH_USER_ID_SESSION_KEY);
-      uiState.authLoginAt = 0;
-      return "";
-    }
-    uiState.authLoginAt = loginAt;
-    return userId;
+    sessionStorage.removeItem(AUTH_USER_ID_SESSION_KEY);
+    localStorage.removeItem(AUTH_USER_ID_LEGACY_LOCAL_KEY);
+    uiState.authLoginAt = 0;
+    return "";
   } catch {
     return "";
   }
@@ -866,17 +836,19 @@ function consumePostLoginRedirectHash() {
 }
 
 function touchAuthLoginNow() {
-  uiState.authLoginAt = Date.now();
-  persistAuthUserId();
+  uiState.authLoginAt = 0;
 }
 
 function hasAuthSessionExpired() {
-  const loginAt = Number(uiState.authLoginAt || 0);
-  if (!Number.isFinite(loginAt) || loginAt <= 0) return false;
-  return Date.now() - loginAt > AUTH_TTL_MS;
+  return false;
 }
 
 function performLogoutAndRedirectToLogin() {
+  void fetch(`${API_BASE}/auth/logout`, {
+    method: "POST",
+    credentials: "same-origin",
+    cache: "no-store"
+  }).catch(() => {});
   uiState.isLoggedIn = false;
   uiState.currentUserId = "";
   uiState.bootstrapFullLoaded = false;
@@ -889,10 +861,8 @@ function performLogoutAndRedirectToLogin() {
 }
 
 async function bootstrapClientData(userId = "") {
-  const query = userId
-    ? `?mode=core&userId=${encodeURIComponent(userId)}`
-    : "?mode=core";
-  const resp = await fetch(`${API_BASE}/bootstrap${query}`);
+  const query = userId ? `?mode=core&userId=${encodeURIComponent(userId)}` : "?mode=core";
+  const resp = await fetch(`${API_BASE}/bootstrap${query}`, { credentials: "same-origin", cache: "no-store" });
   if (!resp.ok) throw new Error(`BOOTSTRAP_HTTP_${resp.status}`);
   const data = await resp.json();
   applyBootstrapData(data, "core");
@@ -903,7 +873,7 @@ async function bootstrapClientData(userId = "") {
 
 async function bootstrapClientDataFull(userId = uiState.currentUserId || "") {
   const query = userId ? `?mode=full&userId=${encodeURIComponent(userId)}` : "?mode=full";
-  const resp = await fetch(`${API_BASE}/bootstrap${query}`);
+  const resp = await fetch(`${API_BASE}/bootstrap${query}`, { credentials: "same-origin", cache: "no-store" });
   if (!resp.ok) throw new Error(`BOOTSTRAP_FULL_HTTP_${resp.status}`);
   const data = await resp.json();
   applyBootstrapData(data, "full");
@@ -4300,6 +4270,7 @@ async function apiJson(path, payload, method = "POST", fetchOptions = {}) {
     resp = await fetch(`${API_BASE}${path}`, {
       method,
       headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify(payload),
       ...fetchOptions
     });
@@ -4322,6 +4293,7 @@ async function apiGetJson(path) {
   try {
     resp = await fetch(`${API_BASE}${path}`, {
       cache: "no-store",
+      credentials: "same-origin",
       headers: {
         "Cache-Control": "no-cache"
       }
@@ -4338,6 +4310,25 @@ async function apiGetJson(path) {
     throw new Error(data?.message || data?.code || `HTTP_${resp.status}`);
   }
   return data;
+}
+
+async function getServerAuthSessionUser() {
+  try {
+    const resp = await fetch(`${API_BASE}/auth/session`, {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: {
+        "Cache-Control": "no-cache"
+      }
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json().catch(() => ({}));
+    if (!data?.user?.id) return null;
+    return data.user;
+  } catch {
+    return null;
+  }
 }
 
 async function apiSseJson(path, payload, handlers = {}) {
@@ -5154,6 +5145,7 @@ async function loginWithAccountAndSync() {
     const resp = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify({ account, password })
     });
     const data = await resp.json().catch(() => ({}));
@@ -5161,12 +5153,11 @@ async function loginWithAccountAndSync() {
       throw new Error(data?.message || data?.code || `HTTP_${resp.status}`);
     }
 
-    await syncUserAfterAuth(data.user.id);
+    await syncUserAfterAuth();
 
     uiState.showLoginModal = false;
     uiState.loginPassword = "";
     uiState.loginError = "";
-    touchAuthLoginNow();
     window.location.hash = consumePostLoginRedirectHash();
   } catch (err) {
     uiState.loginError = err instanceof Error ? err.message : "登录失败，请稍后重试";
@@ -5205,6 +5196,7 @@ async function registerWithAccountAndSync() {
     const resp = await fetch(`${API_BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify({ account, password, confirmPassword })
     });
     const data = await resp.json().catch(() => ({}));
@@ -5212,7 +5204,7 @@ async function registerWithAccountAndSync() {
       throw new Error(data?.message || data?.code || `HTTP_${resp.status}`);
     }
 
-    await syncUserAfterAuth(data.user.id);
+    await syncUserAfterAuth();
 
     uiState.showLoginModal = false;
     uiState.accountAuthMode = "login";
@@ -5221,7 +5213,6 @@ async function registerWithAccountAndSync() {
     uiState.registerConfirmPassword = "";
     uiState.loginPassword = "";
     uiState.loginError = "";
-    touchAuthLoginNow();
     window.location.hash = consumePostLoginRedirectHash();
   } catch (err) {
     uiState.loginError = err instanceof Error ? err.message : "注册失败，请稍后重试";
@@ -5231,14 +5222,16 @@ async function registerWithAccountAndSync() {
   }
 }
 
-async function syncUserAfterAuth(userId) {
-  const boot = await fetch(`${API_BASE}/bootstrap?mode=full&userId=${encodeURIComponent(userId)}`);
+async function syncUserAfterAuth() {
+  const boot = await fetch(`${API_BASE}/bootstrap?mode=full`, { credentials: "same-origin", cache: "no-store" });
   if (!boot.ok) throw new Error(`BOOTSTRAP_${boot.status}`);
   const payload = await boot.json();
   applyBootstrapData(payload, "full");
   uiState.bootstrapFullLoaded = true;
   try {
-    localStorage.setItem(`${BOOTSTRAP_FULL_CACHE_PREFIX}${userId}`, JSON.stringify(payload));
+    if (payload?.user?.id) {
+      localStorage.setItem(`${BOOTSTRAP_FULL_CACHE_PREFIX}${payload.user.id}`, JSON.stringify(payload));
+    }
   } catch {}
 }
 
@@ -11871,10 +11864,15 @@ document.addEventListener("focusout", () => {
 
 async function startApp() {
   hydrateSelectedWorldId();
-  const authUserId = hydrateAuthUserId();
+  hydrateAuthUserId();
+  const sessionUser = await getServerAuthSessionUser();
+  const authUserId = String(sessionUser?.id || "").trim();
   if (authUserId) {
     uiState.currentUserId = authUserId;
     uiState.isLoggedIn = true;
+  } else {
+    uiState.currentUserId = "";
+    uiState.isLoggedIn = false;
   }
   const hasCache = authUserId
     ? tryHydrateFullCache(authUserId)
@@ -11896,7 +11894,7 @@ async function startApp() {
   }
   try {
     if (authUserId) {
-      await bootstrapClientDataFull(authUserId);
+      await bootstrapClientDataFull();
       uiState.bootstrapFullLoaded = true;
     } else {
       await bootstrapClientData();
@@ -11905,7 +11903,7 @@ async function startApp() {
   } catch (error) {
     if (authUserId) {
       try {
-        await bootstrapClientData(authUserId);
+        await bootstrapClientData();
         render();
         return;
       } catch {}

@@ -34,6 +34,62 @@ export async function getUserAuthByIdentifier(identifier) {
   return result.rows[0] || null;
 }
 
+export async function createUserSession({ userId, tokenHash, deviceInfo = {}, ip = null, expiresAt }) {
+  const result = await query(
+    `insert into user_sessions(user_id, token_hash, device_info, ip, expires_at)
+     values ($1::uuid, $2, $3::jsonb, $4::inet, $5::timestamptz)
+     returning id, user_id, expires_at, created_at`,
+    [userId, tokenHash, JSON.stringify(deviceInfo || {}), ip || null, expiresAt]
+  );
+  return result.rows[0] || null;
+}
+
+export async function getSessionByTokenHash(tokenHash) {
+  const result = await query(
+    `select id, user_id, expires_at
+     from user_sessions
+     where token_hash = $1
+       and revoked_at is null
+       and expires_at > now()
+     limit 1`,
+    [tokenHash]
+  );
+  return result.rows[0] || null;
+}
+
+export async function getSessionUserByTokenHash(tokenHash) {
+  const result = await query(
+    `select
+       s.id as session_id,
+       s.user_id,
+       s.expires_at,
+       u.id,
+       u.email,
+       u.nickname,
+       u.created_at
+     from user_sessions s
+     join users u on u.id = s.user_id
+     where s.token_hash = $1
+       and s.revoked_at is null
+       and s.expires_at > now()
+       and coalesce(u.status, 'active') = 'active'
+     limit 1`,
+    [tokenHash]
+  );
+  return result.rows[0] || null;
+}
+
+export async function revokeSessionByTokenHash(tokenHash) {
+  await query(
+    `update user_sessions
+     set revoked_at = now(),
+         updated_at = now()
+     where token_hash = $1
+       and revoked_at is null`,
+    [tokenHash]
+  );
+}
+
 export async function listUsers() {
   const result = await query(
     `select id, email, nickname, created_at from users order by created_at desc limit 100`
