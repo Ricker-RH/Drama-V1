@@ -6770,7 +6770,11 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "submit-search") {
-      executeSearch(inCommunitySearchFlow ? uiState.communitySearchQuery : uiState.searchQuery);
+      const searchScope = actionTarget.closest(".xh-search, .xh-mobile-search-row, .search-mobile-global-field, .community-search-wrap");
+      const scopeInput = searchScope?.querySelector("input");
+      const directValue = (scopeInput instanceof HTMLInputElement ? scopeInput.value : "").trim();
+      const fallbackValue = (inCommunitySearchFlow ? uiState.communitySearchQuery : uiState.searchQuery).trim();
+      executeSearch(directValue || fallbackValue);
       return;
     }
     if (action === "cancel-search-results") {
