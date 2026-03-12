@@ -6539,14 +6539,16 @@ code {
 }
 
 .home-body h4 {
-  font-size: 20px;
-  line-height: 1.25;
+  font-size: 13px !important;
+  line-height: 1.35;
+  font-weight: 700;
 }
 
 .home-author {
   margin-top: 8px;
   color: #6b7280;
-  font-size: 14px;
+  font-size: 13px !important;
+  line-height: 1.35;
 }
 
 .home-test-badge {
