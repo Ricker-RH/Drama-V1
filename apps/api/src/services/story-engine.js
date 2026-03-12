@@ -495,6 +495,53 @@ function hasRepeatedOpeningTemplate(nowResult = "", prevResult = "", mode = "") 
   return false;
 }
 
+function pickInputAnchors(input = "", max = 4) {
+  const src = String(input || "");
+  const stop = new Set(["然后", "接着", "继续", "一下", "这个", "那个", "这里", "那里", "可以", "帮我", "我们"]);
+  const chunks = src
+    .split(/[，。；、,/\-|：:\s\[\]（）()·!?？！]+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .filter((x) => x.length >= 2 && x.length <= 10)
+    .filter((x) => !stop.has(x));
+  const uniq = [...new Set(chunks)];
+  return uniq.slice(0, max);
+}
+
+function buildOpeningGenerationGuard(input, sessionMeta = {}, detailMemory = []) {
+  const prevFirst = firstSentence(sessionMeta?.previousTurn?.narrative || "", 56);
+  const bannedOpenings = [
+    prevFirst,
+    "清晨的阳光透过落地窗洒在办公室的每一个角落",
+    "清晨的落地窗前，阳光洒在你的桌面上",
+    "空气中弥漫着新一天的希望和紧张",
+    "你站在茫茫人海之中，锐利的目光如同猎鹰搜寻猎物"
+  ]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  const anchorsFromInput = pickInputAnchors(input, 5);
+  const anchorsFromMemory = (Array.isArray(detailMemory) ? detailMemory : [])
+    .map((x) => String(x || "").trim())
+    .filter((x) => x.length >= 2 && x.length <= 10)
+    .slice(0, 4);
+  const requiredAnchorTokens = [...new Set([...anchorsFromInput, ...anchorsFromMemory])].slice(0, 6);
+
+  const instructionLines = [
+    "首句去模板化硬约束：",
+    `- 首句禁止复用这些起手句（或其近义改写）：${bannedOpenings.join(" / ")}`,
+    `- 首句必须命中本回合动作锚点至少1个：${requiredAnchorTokens.join(" / ")}`,
+    "- 首句优先从“动作/对话/冲突”起手，不要从天气、时间、氛围描写起手。"
+  ];
+
+  return {
+    bannedOpenings,
+    requiredAnchorTokens,
+    instructionText: instructionLines.join("\n")
+  };
+}
+
 function hasEnumeratedListStyle(text = "") {
   const src = String(text || "");
   if (!src) return false;
@@ -937,6 +984,7 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
 
   const runtimeMode = normalizeMode(sessionMeta.mode || sessionMeta?.storyContext?.mode || "");
   const detailMemory = buildDetailMemory(sessionMeta);
+  const openingGuard = buildOpeningGenerationGuard(input, sessionMeta, detailMemory);
 
   const userPayload = {
     session: {
@@ -956,6 +1004,13 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
         }
       : null,
     detail_memory: detailMemory.slice(0, 16),
+    generation_guard: {
+      opening_sentence: {
+        avoid_templates: openingGuard.bannedOpenings,
+        require_action_anchor_tokens: openingGuard.requiredAnchorTokens,
+        instruction: "首句必须与本回合用户动作强绑定，不得复用上一回合或固定模板起手句。"
+      }
+    },
     turn_index: turnIndex,
     user_input: input,
     output_contract: "strict_json_and_narrative_tags",
@@ -1005,7 +1060,8 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
 
   const baseMessages = [
     { role: "system", content: systemPrompt },
-    { role: "user", content: JSON.stringify(userPayload, null, 2) }
+    { role: "user", content: JSON.stringify(userPayload, null, 2) },
+    { role: "user", content: openingGuard.instructionText }
   ];
 
   let result = await requestModel(baseMessages);
@@ -1036,6 +1092,7 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
       retryLines.push("禁止重复上一回合开场与场景铺垫，禁止回档到已发生场景。");
       retryLines.push("开头首句必须换新：不得复用“清晨的落地窗/阳光/空气中弥漫”等模板起手句。");
     }
+    retryLines.push(openingGuard.instructionText);
     if (runtimeMode === "virtual_character") {
       retryLines.push("必须像真人聊天：用角色口吻直接说话，不要写“你执行了/阶段性推进”这类复盘口吻。");
       retryLines.push("人称硬要求：以第三人称镜头叙事承接现场（你/她/他），台词中可自然使用第一人称。");
@@ -1100,6 +1157,7 @@ export async function runStoryTurnStream({ turnIndex, input, sessionMeta, onNarr
 
   const runtimeMode = normalizeMode(sessionMeta.mode || sessionMeta?.storyContext?.mode || "");
   const detailMemory = buildDetailMemory(sessionMeta);
+  const openingGuard = buildOpeningGenerationGuard(input, sessionMeta, detailMemory);
   const userPayload = {
     session: {
       id: sessionMeta.id,
@@ -1118,6 +1176,13 @@ export async function runStoryTurnStream({ turnIndex, input, sessionMeta, onNarr
         }
       : null,
     detail_memory: detailMemory.slice(0, 16),
+    generation_guard: {
+      opening_sentence: {
+        avoid_templates: openingGuard.bannedOpenings,
+        require_action_anchor_tokens: openingGuard.requiredAnchorTokens,
+        instruction: "首句必须与本回合用户动作强绑定，不得复用上一回合或固定模板起手句。"
+      }
+    },
     turn_index: turnIndex,
     user_input: input,
     output_contract: "strict_json_and_narrative_tags",
@@ -1125,7 +1190,8 @@ export async function runStoryTurnStream({ turnIndex, input, sessionMeta, onNarr
   };
   const messages = [
     { role: "system", content: systemPrompt },
-    { role: "user", content: JSON.stringify(userPayload, null, 2) }
+    { role: "user", content: JSON.stringify(userPayload, null, 2) },
+    { role: "user", content: openingGuard.instructionText }
   ];
   try {
     const { fullContent } = await streamModelWithNarrativeDelta({
