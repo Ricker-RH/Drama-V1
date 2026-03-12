@@ -909,6 +909,7 @@ function getPageTitleByRoute(hash) {
     "#/community/group/post": "发动态",
     "#/community/post/detail": "社区动态",
     "#/community/user": "用户主页",
+    "#/community/join": "加入社区",
     "#/messages/detail": "动态详情",
     "#/messages/story/dynamic": "我的动态",
     "#/messages/story/album": "我的相册",
@@ -999,6 +1000,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
     "#/messages/chat",
     "#/messages/thread",
     "#/community/home",
+    "#/community/join",
     "#/community/mine",
     "#/community/group",
     "#/me/home",
@@ -4989,17 +4991,20 @@ function pageCommunity() {
           <h2>社区</h2>
         </div>
         <div class="community-search-create-row">
-          <button class="community-search-portal community-search-portal-flat" data-action="open-search-panel">
-            <span>搜索世界/主题/设定/作者</span>
-            <em>⌕</em>
-          </button>
+          <div class="community-search-wrap xh-search-wrap" data-action="noop">
+            <div class="xh-search" data-action="open-search-panel">
+              <input value="${escapeHtml(uiState.communitySearchQuery)}" placeholder="搜索世界/主题/设定/作者" />
+              <button class="xh-search-submit" data-action="submit-search">⌕</button>
+            </div>
+            ${uiState.communitySearchPanelOpen ? renderSearchPanel("community") : ""}
+          </div>
           <button class="community-plus-create-btn" data-go="#/community/create">
             <span>＋</span>
             <em>创建社区</em>
           </button>
         </div>
         <div class="community-quick-entry-row">
-          <button data-go="#/community/search"><span>🧭</span><em>加入社区</em></button>
+          <button data-go="#/community/join"><span>🧭</span><em>加入社区</em></button>
           <button data-go="#/community/mine"><span>👥</span><em>我的社区</em></button>
           <button data-go="#/community/manage/joined"><span>🛠</span><em>管理社区</em></button>
           <button data-go="#/community/create"><span>✨</span><em>创建社区</em></button>
@@ -5012,6 +5017,15 @@ function pageCommunity() {
       </div>
       <h3>推荐社群（${filteredList.length}）</h3>
       ${renderCommunityCards(filteredList)}
+    </section>
+  `);
+}
+
+function pageCommunityJoin() {
+  return renderExploreShell(`
+    <section class="community-page">
+      <div class="search-result-top"><h3>加入社区</h3></div>
+      ${renderCommunityCards(COMMUNITY_LIST, "暂时没有可加入的社群")}
     </section>
   `);
 }
@@ -5035,7 +5049,6 @@ function pageCommunityMine() {
 function pageCommunitySearch() {
   const q = uiState.communitySearchQuery.trim();
   const tabs = ["综合", "社群", "话题"];
-  const sortOptions = ["相关度", "热度", "最新"];
   const ranked = searchCommunityList(q, 80, uiState.communitySearchSort);
   const tagPool = new Map();
   ranked.forEach((item) => (item.tags || []).forEach((tag) => tagPool.set(tag, (tagPool.get(tag) || 0) + 1)));
@@ -5044,12 +5057,9 @@ function pageCommunitySearch() {
 
   return renderExploreShell(`
     <section class="search-result-page">
-      <div class="search-result-top"><h3>社群搜索</h3><p>找到 ${ranked.length} 个相关社群</p></div>
+      <div class="search-result-top"><h3>搜索结果</h3><p>找到 ${ranked.length} 个相关社群</p></div>
       <div class="search-result-tabs">
         ${tabs.map((t) => `<button class="${t === activeTab ? "active" : ""}" data-action="set-community-search-tab" data-tab="${t}">${t}</button>`).join("")}
-      </div>
-      <div class="search-result-sort">
-        ${sortOptions.map((s) => `<button class="${s === uiState.communitySearchSort ? "active" : ""}" data-action="set-community-search-sort" data-sort="${s}">${s}</button>`).join("")}
       </div>
       ${
         activeTab === "话题"
@@ -6536,6 +6546,7 @@ const renderers = {
   "#/play/model": pagePlayModel,
   "#/workshop/world": pageWorkshop,
   "#/community/home": pageCommunity,
+  "#/community/join": pageCommunityJoin,
   "#/community/mine": pageCommunityMine,
   "#/community/search": pageCommunitySearch,
   "#/community/create": pageCommunityCreate,
