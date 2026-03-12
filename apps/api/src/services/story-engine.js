@@ -467,6 +467,34 @@ function sentenceCount(text) {
   return src.split(/[。！？!?]/).map((x) => x.trim()).filter(Boolean).length;
 }
 
+function firstSentence(text = "", maxChars = 68) {
+  const src = String(text || "").trim().replace(/\s+/g, "");
+  if (!src) return "";
+  const m = src.match(/^(.{8,120}?[。！？!?])/);
+  const s = (m?.[1] || src.slice(0, maxChars)).trim();
+  return s.slice(0, maxChars);
+}
+
+function hasRepeatedOpeningTemplate(nowResult = "", prevResult = "", mode = "") {
+  const nowHead = firstSentence(nowResult);
+  const prevHead = firstSentence(prevResult);
+  if (!nowHead || !prevHead) return false;
+  const sim = jaccardSimilarity(nowHead, prevHead);
+  if (sim >= 0.9 && Math.min(nowHead.length, prevHead.length) >= 18) return true;
+  if (mode === "virtual_character") {
+    const staleTemplatePatterns = [
+      /清晨的(?:阳光|落地窗)/,
+      /空气中弥漫着新一天的希望和紧张/,
+      /签字笔在半空中停了一下/,
+      /银色镜片反光/
+    ];
+    const nowHit = staleTemplatePatterns.some((re) => re.test(nowHead));
+    const prevHit = staleTemplatePatterns.some((re) => re.test(prevHead));
+    if (nowHit && prevHit) return true;
+  }
+  return false;
+}
+
 function hasEnumeratedListStyle(text = "") {
   const src = String(text || "");
   if (!src) return false;
@@ -686,6 +714,7 @@ function evaluateNarrativeQuality({ narrativeText, turnIndex, input, sessionMeta
 
   let highRepeat = false;
   let sceneReset = false;
+  let openingTemplateRepeat = false;
   if (turnIndex > 1 && prevResult) {
     const sim = jaccardSimilarity(prevResult, nowResult);
     const prevLen = Math.max(1, countVisibleChars(prevResult));
@@ -708,11 +737,16 @@ function evaluateNarrativeQuality({ narrativeText, turnIndex, input, sessionMeta
       sceneReset = true;
       issues.push("scene_reset_risk");
     }
+    if (hasRepeatedOpeningTemplate(nowResult, prevResult, mode)) {
+      openingTemplateRepeat = true;
+      issues.push("opening_template_repeat");
+    }
   }
 
   // Hard fail should focus on true regressions (rollback/repetition) rather than style variance.
   const hardFailures = [];
   if (sceneReset) hardFailures.push("scene_reset_risk");
+  if (openingTemplateRepeat) hardFailures.push("opening_template_repeat");
   if ((highRepeat && internalDup) || (highRepeat && actionMiss) || (internalDup && actionMiss)) {
     hardFailures.push("compound_quality_failure");
   }
@@ -1000,6 +1034,7 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
     } else {
       retryLines.push("必须强承接用户输入，给出具体后果与下一步可执行抛球。");
       retryLines.push("禁止重复上一回合开场与场景铺垫，禁止回档到已发生场景。");
+      retryLines.push("开头首句必须换新：不得复用“清晨的落地窗/阳光/空气中弥漫”等模板起手句。");
     }
     if (runtimeMode === "virtual_character") {
       retryLines.push("必须像真人聊天：用角色口吻直接说话，不要写“你执行了/阶段性推进”这类复盘口吻。");

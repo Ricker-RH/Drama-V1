@@ -85,6 +85,7 @@ function toUserFacingTurnError(llmResult) {
     if (
       qualityKeys.includes("scene_reset_risk")
       || qualityKeys.includes("high_repeat_with_previous_turn")
+      || qualityKeys.includes("opening_template_repeat")
       || qualityKeys.includes("compound_quality_failure")
     ) {
       return "文本质量门禁未通过（检测到重复或回档），已自动重试后仍失败，请换一种更具体的行动描述再试";
@@ -133,6 +134,7 @@ function isRepeatRollbackQualityFailure(llmResult) {
   return (
     keySet.has("scene_reset_risk")
     || keySet.has("high_repeat_with_previous_turn")
+    || keySet.has("opening_template_repeat")
     || keySet.has("compound_quality_failure")
   );
 }
