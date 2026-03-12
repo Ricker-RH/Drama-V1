@@ -4091,9 +4091,11 @@ function pageDirectMessage() {
 function pagePlayCore() {
   const world = getSelectedWorld();
   const profile = getWorldProfile(world);
+  const storyContext = buildStoryContext(world);
   ensurePlayAutoOpening(world);
   const stage = `${Math.min(4, Math.max(1, Math.floor((uiState.playRound + 1) / 2)))}/4`;
   const displayClues = String(uiState.playDynamicClues || profile.clues || "动态探索中").trim();
+  const isCharacterMode = storyContext.mode === "virtual_character";
   const modelMenuOpen = uiState.playModelMenuOpen || window.location.hash === "#/play/model";
   const roundLabel = `第${uiState.playRound}幕 · ${uiState.playChapter} · 03:17`;
   return `
@@ -4129,7 +4131,7 @@ function pagePlayCore() {
               <div class="play-status-item"><span>当前任务</span><strong>${escapeHtml(profile.mainQuest)}</strong></div>
               <div class="play-status-item"><span>阶段</span><strong>${stage}</strong></div>
               <div class="play-status-item"><span>NPC</span><strong>${escapeHtml(profile.npc)}</strong></div>
-              <div class="play-status-item"><span>线索</span><strong>${escapeHtml(displayClues)}</strong></div>
+              <div class="play-status-item"><span>${isCharacterMode ? "关系进展" : "线索"}</span><strong>${escapeHtml(isCharacterMode ? "互动推进中" : displayClues)}</strong></div>
             </div>
           `
               : ""

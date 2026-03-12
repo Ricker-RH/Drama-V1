@@ -182,14 +182,16 @@ function pickChoiceClueHints(jsonBlock = {}) {
 }
 
 function buildTurnClueState({ sessionMeta, llmResult, turnIndex }) {
+  const mode = normalizeMode(sessionMeta?.mode || sessionMeta?.storyContext?.mode || "");
   const staticClues = splitClueTerms(sessionMeta?.storyContext?.clues || "");
   const prevActive = Array.isArray(sessionMeta?.previousTurn?.stateDelta?.cluesActive)
     ? sessionMeta.previousTurn.stateDelta.cluesActive.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
   const choiceHints = pickChoiceClueHints(llmResult?.jsonBlock || {});
 
-  const active = [];
-  if (staticClues.length) {
+  // In character-interaction mode, avoid clue-led repetition; use only emergent hints.
+  const active = [...choiceHints.slice(0, 3)];
+  if (mode !== "virtual_character" && staticClues.length && active.length < 2) {
     const idx = (Math.max(1, Number(turnIndex || 1)) - 1) % staticClues.length;
     active.push(staticClues[idx]);
     if (staticClues.length > 2) {
@@ -198,14 +200,11 @@ function buildTurnClueState({ sessionMeta, llmResult, turnIndex }) {
     }
   }
 
-  for (const item of choiceHints) {
-    if (!active.includes(item)) active.push(item);
-    if (active.length >= 3) break;
-  }
+  const uniqActive = [...new Set(active)].slice(0, 3);
 
-  const compact = active.filter((x) => !prevActive.includes(x) || active.length <= 1).slice(0, 3);
+  const compact = uniqActive.filter((x) => !prevActive.includes(x) || uniqActive.length <= 1).slice(0, 3);
   return {
-    cluesActive: compact.length ? compact : active.slice(0, 3),
+    cluesActive: compact.length ? compact : uniqActive,
     cluesSource: "dynamic_turn_rotation"
   };
 }

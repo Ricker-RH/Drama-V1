@@ -235,7 +235,6 @@ function buildContextAnchors(sessionMeta = {}) {
     storyContext.chapter,
     storyContext.mainQuest,
     storyContext.npc,
-    storyContext.clues,
     storyContext.opening_line,
     storyContext.primary_goal,
     storyContext.core_conflict
@@ -272,7 +271,6 @@ function buildDetailMemory(sessionMeta = {}) {
     storyContext.chapter,
     storyContext.mainQuest,
     storyContext.npc,
-    storyContext.clues,
     storyContext.player_identity,
     storyContext.primary_goal,
     storyContext.core_conflict
@@ -499,11 +497,7 @@ function parseStoryClueTerms(sessionMeta = {}) {
   const storyContext = sessionMeta?.storyContext && typeof sessionMeta.storyContext === "object"
     ? sessionMeta.storyContext
     : {};
-  const prevActive = Array.isArray(sessionMeta?.previousTurn?.stateDelta?.cluesActive)
-    ? sessionMeta.previousTurn.stateDelta.cluesActive
-    : [];
   const raw = [
-    ...prevActive,
     storyContext.clues
   ]
     .map((x) => String(x || "").trim())
@@ -531,6 +525,7 @@ function pickInputAnchors(input = "", max = 4) {
 }
 
 function buildOpeningGenerationGuard(input, sessionMeta = {}, turnIndex = 1) {
+  const mode = normalizeMode(sessionMeta?.mode || sessionMeta?.storyContext?.mode || "");
   const prevFirst = firstSentence(sessionMeta?.previousTurn?.narrative || "", 56);
   const prevInput = String(sessionMeta?.previousTurn?.userInput || "");
   const bannedOpenings = [
@@ -556,15 +551,23 @@ function buildOpeningGenerationGuard(input, sessionMeta = {}, turnIndex = 1) {
     "首句去模板化硬约束：",
     `- 首句禁止复用这些起手句（或其近义改写）：${bannedOpenings.join(" / ")}`,
     `- 首句必须命中本回合动作锚点至少1个：${requiredAnchorTokens.join(" / ")}`,
-    "- 首句优先从“动作/对话/冲突”起手，不要从天气、时间、氛围描写起手。",
-    "线索推进硬约束：",
-    activeClue
-      ? `- 本回合优先推进线索“${activeClue}”，不要整段重复线索清单。`
-      : "- 本回合线索只允许轻量回指，重心放在动作后果与关系变化。",
-    repeatedCluesInPrev.length
-      ? `- 以下线索上回合已提及，本回合避免再次完整复述：${repeatedCluesInPrev.join(" / ")}`
-      : "- 若提及旧线索，最多点到1项并立即给出新变化。"
+    "- 首句优先从“动作/对话/冲突”起手，不要从天气、时间、氛围描写起手。"
   ];
+  if (mode !== "virtual_character") {
+    instructionLines.push("线索推进软约束：");
+    instructionLines.push(
+      activeClue
+        ? `- 可优先推进线索“${activeClue}”，但不要整段复述线索清单。`
+        : "- 线索只作轻量回指，正文重心放在动作后果与关系变化。"
+    );
+    instructionLines.push(
+      repeatedCluesInPrev.length
+        ? `- 以下线索上回合已提及，尽量避免再次完整复述：${repeatedCluesInPrev.join(" / ")}`
+        : "- 若提及旧线索，建议最多点到1项并给出新变化。"
+    );
+  } else {
+    instructionLines.push("- 角色互动模式优先人物关系推进，线索词不得主导正文。");
+  }
 
   return {
     bannedOpenings,
