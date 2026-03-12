@@ -4999,10 +4999,10 @@ function pageCommunity() {
           </button>
         </div>
         <div class="community-quick-entry-row">
-          <button data-go="#/community/search">加入社区</button>
-          <button data-go="#/community/mine">我的社区</button>
-          <button data-go="#/community/manage/joined">管理社区</button>
-          <button data-go="#/community/create">创建社区</button>
+          <button data-go="#/community/search"><span>🧭</span><em>加入社区</em></button>
+          <button data-go="#/community/mine"><span>👥</span><em>我的社区</em></button>
+          <button data-go="#/community/manage/joined"><span>🛠</span><em>管理社区</em></button>
+          <button data-go="#/community/create"><span>✨</span><em>创建社区</em></button>
         </div>
       </header>
       <div class="xh-filter-panel expanded drama-filter-panel community-filter-drama">
