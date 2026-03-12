@@ -49,7 +49,8 @@ const API_BASE = "/api/v1";
 const BOOTSTRAP_CORE_CACHE_KEY = "drama_bootstrap_core_v5";
 const BOOTSTRAP_FULL_CACHE_PREFIX = "drama_bootstrap_full_v5_";
 const SELECTED_WORLD_ID_CACHE_KEY = "drama_selected_world_id_v4";
-const AUTH_USER_ID_CACHE_KEY = "drama_auth_user_id_v1";
+const AUTH_USER_ID_SESSION_KEY = "drama_auth_user_id_session_v2";
+const AUTH_USER_ID_LEGACY_LOCAL_KEY = "drama_auth_user_id_v1";
 const WORLD_INTERACTION_CACHE_PREFIX = "drama_world_interactions_v1_";
 const WORLD_REACTION_PENDING_PREFIX = "drama_world_reaction_pending_v1_";
 const FOLLOW_STATE_CACHE_PREFIX = "drama_follow_state_v1_";
@@ -216,6 +217,7 @@ function clearLegacyClientCaches() {
     localStorage.removeItem("drama_selected_world_id_v1");
     localStorage.removeItem("drama_selected_world_id_v2");
     localStorage.removeItem("drama_selected_world_id_v3");
+    localStorage.removeItem(AUTH_USER_ID_LEGACY_LOCAL_KEY);
     const removeKeys = [];
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
@@ -775,16 +777,19 @@ function persistAuthUserId() {
   try {
     const id = String(uiState.currentUserId || "").trim();
     if (!id) {
-      localStorage.removeItem(AUTH_USER_ID_CACHE_KEY);
+      sessionStorage.removeItem(AUTH_USER_ID_SESSION_KEY);
+      localStorage.removeItem(AUTH_USER_ID_LEGACY_LOCAL_KEY);
       return;
     }
-    localStorage.setItem(AUTH_USER_ID_CACHE_KEY, id);
+    // Tab-scoped auth: avoid cross-tab account override on refresh.
+    sessionStorage.setItem(AUTH_USER_ID_SESSION_KEY, id);
+    localStorage.removeItem(AUTH_USER_ID_LEGACY_LOCAL_KEY);
   } catch {}
 }
 
 function hydrateAuthUserId() {
   try {
-    return String(localStorage.getItem(AUTH_USER_ID_CACHE_KEY) || "").trim();
+    return String(sessionStorage.getItem(AUTH_USER_ID_SESSION_KEY) || "").trim();
   } catch {
     return "";
   }
