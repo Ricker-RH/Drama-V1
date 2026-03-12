@@ -49,8 +49,11 @@ const API_BASE = "/api/v1";
 const BOOTSTRAP_CORE_CACHE_KEY = "drama_bootstrap_core_v6";
 const BOOTSTRAP_FULL_CACHE_PREFIX = "drama_bootstrap_full_v6_";
 const SELECTED_WORLD_ID_CACHE_KEY = "drama_selected_world_id_v4";
-const AUTH_USER_ID_SESSION_KEY = "drama_auth_user_id_session_v2";
+const AUTH_USER_ID_SESSION_KEY = "drama_auth_session_v3";
 const AUTH_USER_ID_LEGACY_LOCAL_KEY = "drama_auth_user_id_v1";
+const AUTH_REDIRECT_HASH_KEY = "drama_auth_redirect_hash_v1";
+const AUTH_TTL_MS = 30 * 60 * 1000;
+const AUTH_PUBLIC_ROUTES = new Set(["#/auth/login"]);
 const WORLD_INTERACTION_CACHE_PREFIX = "drama_world_interactions_v1_";
 const WORLD_REACTION_PENDING_PREFIX = "drama_world_reaction_pending_v1_";
 const FOLLOW_STATE_CACHE_PREFIX = "drama_follow_state_v1_";
@@ -279,6 +282,8 @@ const uiState = {
   reserveFeedback: "",
   carouselTimerActive: false,
   showLoginModal: false,
+  postLoginRedirectHash: "",
+  authLoginAt: 0,
   loginMethod: "phone",
   accountAuthMode: "login",
   loginAccount: "",
@@ -787,20 +792,99 @@ function persistAuthUserId() {
     const id = String(uiState.currentUserId || "").trim();
     if (!id) {
       sessionStorage.removeItem(AUTH_USER_ID_SESSION_KEY);
+      sessionStorage.removeItem(AUTH_REDIRECT_HASH_KEY);
       localStorage.removeItem(AUTH_USER_ID_LEGACY_LOCAL_KEY);
+      uiState.authLoginAt = 0;
       return;
     }
-    // Tab-scoped auth: avoid cross-tab account override on refresh.
-    sessionStorage.setItem(AUTH_USER_ID_SESSION_KEY, id);
+    let loginAt = Number(uiState.authLoginAt || 0);
+    if (!Number.isFinite(loginAt) || loginAt <= 0) {
+      try {
+        const raw = sessionStorage.getItem(AUTH_USER_ID_SESSION_KEY);
+        const prev = raw ? JSON.parse(raw) : null;
+        if (String(prev?.userId || "").trim() === id) {
+          loginAt = Number(prev?.loginAt || 0);
+        }
+      } catch {}
+    }
+    if (!Number.isFinite(loginAt) || loginAt <= 0) loginAt = Date.now();
+    uiState.authLoginAt = loginAt;
+    sessionStorage.setItem(AUTH_USER_ID_SESSION_KEY, JSON.stringify({ userId: id, loginAt }));
     localStorage.removeItem(AUTH_USER_ID_LEGACY_LOCAL_KEY);
   } catch {}
 }
 
 function hydrateAuthUserId() {
   try {
-    return String(sessionStorage.getItem(AUTH_USER_ID_SESSION_KEY) || "").trim();
+    const raw = sessionStorage.getItem(AUTH_USER_ID_SESSION_KEY);
+    if (!raw) return "";
+    const parsed = JSON.parse(raw);
+    const userId = String(parsed?.userId || "").trim();
+    const loginAt = Number(parsed?.loginAt || 0);
+    if (!userId || !Number.isFinite(loginAt) || loginAt <= 0) {
+      sessionStorage.removeItem(AUTH_USER_ID_SESSION_KEY);
+      return "";
+    }
+    if (Date.now() - loginAt > AUTH_TTL_MS) {
+      sessionStorage.removeItem(AUTH_USER_ID_SESSION_KEY);
+      uiState.authLoginAt = 0;
+      return "";
+    }
+    uiState.authLoginAt = loginAt;
+    return userId;
   } catch {
     return "";
+  }
+}
+
+function isAuthRoute(routePath = "") {
+  return AUTH_PUBLIC_ROUTES.has(String(routePath || "").trim());
+}
+
+function setPostLoginRedirectHash(hash = "") {
+  const safe = String(hash || "").trim();
+  if (!safe || isAuthRoute(safe.split("?")[0] || safe)) return;
+  uiState.postLoginRedirectHash = safe;
+  try {
+    sessionStorage.setItem(AUTH_REDIRECT_HASH_KEY, safe);
+  } catch {}
+}
+
+function consumePostLoginRedirectHash() {
+  let next = String(uiState.postLoginRedirectHash || "").trim();
+  if (!next) {
+    try {
+      next = String(sessionStorage.getItem(AUTH_REDIRECT_HASH_KEY) || "").trim();
+    } catch {}
+  }
+  if (!next || isAuthRoute(next.split("?")[0] || next)) next = "#/theater/home";
+  uiState.postLoginRedirectHash = "";
+  try {
+    sessionStorage.removeItem(AUTH_REDIRECT_HASH_KEY);
+  } catch {}
+  return next;
+}
+
+function touchAuthLoginNow() {
+  uiState.authLoginAt = Date.now();
+  persistAuthUserId();
+}
+
+function hasAuthSessionExpired() {
+  const loginAt = Number(uiState.authLoginAt || 0);
+  if (!Number.isFinite(loginAt) || loginAt <= 0) return false;
+  return Date.now() - loginAt > AUTH_TTL_MS;
+}
+
+function performLogoutAndRedirectToLogin() {
+  uiState.isLoggedIn = false;
+  uiState.currentUserId = "";
+  uiState.bootstrapFullLoaded = false;
+  uiState.bootstrapFullLoading = false;
+  uiState.showLoginModal = false;
+  persistAuthUserId();
+  if (window.location.hash !== "#/auth/login") {
+    window.location.hash = "#/auth/login";
   }
 }
 
@@ -887,20 +971,7 @@ function isMobileViewport() {
 function pageLogin() {
   return `
     <section class="screen">
-      <div class="auth-wrap">
-        <div class="auth-card">
-          <div class="auth-brand auth-brand-center">
-            <div class="auth-logo"><img src="/assets/logo-v3.png" alt="爪马 Logo" loading="eager" fetchpriority="high" /></div>
-            <h2>Drama</h2>
-            <p>请选择登录方式</p>
-          </div>
-          <button class="auth-btn auth-primary" data-go="#/auth/phone">手机号登录</button>
-          <button class="auth-btn" data-go="#/auth/wechat">微信登录</button>
-          <button class="auth-btn">Apple 登录</button>
-          <button class="auth-btn">Google 登录</button>
-          <p class="auth-footnote">登录即表示你同意《用户协议》与《隐私政策》</p>
-        </div>
-      </div>
+      ${renderExploreLoginModal({ standalone: true })}
     </section>
   `;
 }
@@ -1127,7 +1198,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
     { label: "我的", path: "#/me/home", match: (hash) => hash === "#/me/home" || hash.startsWith("#/me/") },
     { label: "创作中心", path: "#/workshop/world", match: (hash) => hash.startsWith("#/workshop") }
   ];
-  const currentHash = window.location.hash || "#/theater/home";
+  const currentHash = getCurrentRoutePath();
   const isPlayRoute = currentHash.startsWith("#/play");
   const isCommunityRoute = currentHash.startsWith("#/community");
   const isMessageRoute = currentHash.startsWith("#/messages");
@@ -1235,7 +1306,6 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
       <div class="play-route-host">
         ${mainContentHtml}
       </div>
-      ${uiState.showLoginModal ? renderExploreLoginModal() : ""}
       ${uiState.showProfileEditModal ? renderProfileEditModal() : ""}
       ${uiState.showProfileAvatarPreview ? renderProfileAvatarPreviewModal() : ""}
       ${uiState.showWorldShareSheet ? renderWorldShareSheet() : ""}
@@ -1384,7 +1454,6 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
       </nav>
     `
     }
-    ${uiState.showLoginModal ? renderExploreLoginModal() : ""}
     ${uiState.showProfileEditModal ? renderProfileEditModal() : ""}
     ${uiState.showProfileAvatarPreview ? renderProfileAvatarPreviewModal() : ""}
     ${uiState.showWorldShareSheet ? renderWorldShareSheet() : ""}
@@ -1574,14 +1643,15 @@ function renderSearchResultSection() {
   `;
 }
 
-function renderExploreLoginModal() {
+function renderExploreLoginModal(options = {}) {
+  const standalone = Boolean(options?.standalone);
   const rawMethod = uiState.loginMethod || "phone";
   const method = rawMethod === "account" ? "account" : "phone";
   const accountAuthMode = uiState.accountAuthMode || "login";
   return `
-    <div class="login-overlay">
+    <div class="login-overlay${standalone ? " login-overlay-standalone" : ""}">
       <div class="login-modal">
-        <button class="login-modal-close" data-action="close-login-modal">×</button>
+        ${standalone ? "" : `<button class="login-modal-close" data-action="close-login-modal">×</button>`}
         <div class="login-modal-left">
           <div class="login-bubble">登录后推荐更懂你的内容</div>
           <div class="login-mini-brand"><img src="/assets/logo-v3.png" alt="爪马 Logo" loading="eager" fetchpriority="high" /><span>爪马 Drama</span></div>
@@ -1627,7 +1697,7 @@ function renderExploreLoginModal() {
           }
           ${uiState.loginError ? `<p class="login-error">${escapeHtml(uiState.loginError)}</p>` : ""}
           <label class="login-agree"><input type="checkbox" checked /><span>已阅读并同意《用户协议》《隐私政策》</span></label>
-          <p class="login-note">新用户可直接登录</p>
+          <p class="login-note">新用户可直接登录 · 登录有效期 30 分钟</p>
         </div>
       </div>
     </div>
@@ -2276,8 +2346,8 @@ function openAuthorProfileByName(name = "") {
   const resolved = String(name || "").trim();
   if (!resolved) {
     if (!uiState.isLoggedIn) {
-      uiState.showLoginModal = true;
-      render();
+      setPostLoginRedirectHash(window.location.hash || "#/theater/home");
+      window.location.hash = "#/auth/login";
       return;
     }
     if (window.location.hash !== "#/me/home") window.location.hash = "#/me/home";
@@ -3890,8 +3960,8 @@ function showMessageFeedback(text) {
 async function startOrReuseDirectConversation(targetUserId, targetName = "对方", options = {}) {
   const navigate = options.navigate !== false;
   if (!uiState.isLoggedIn || !uiState.currentUserId) {
-    uiState.showLoginModal = true;
-    render();
+    setPostLoginRedirectHash("#/messages/thread");
+    window.location.hash = "#/auth/login";
     return "";
   }
   const targetIdRaw = String(targetUserId || "").trim();
@@ -5032,6 +5102,8 @@ async function loginWithAccountAndSync() {
     uiState.showLoginModal = false;
     uiState.loginPassword = "";
     uiState.loginError = "";
+    touchAuthLoginNow();
+    window.location.hash = consumePostLoginRedirectHash();
   } catch (err) {
     uiState.loginError = err instanceof Error ? err.message : "登录失败，请稍后重试";
   } finally {
@@ -5085,6 +5157,8 @@ async function registerWithAccountAndSync() {
     uiState.registerConfirmPassword = "";
     uiState.loginPassword = "";
     uiState.loginError = "";
+    touchAuthLoginNow();
+    window.location.hash = consumePostLoginRedirectHash();
   } catch (err) {
     uiState.loginError = err instanceof Error ? err.message : "注册失败，请稍后重试";
   } finally {
@@ -5580,7 +5654,6 @@ function pagePlayCore() {
           : ""
       }
     </section>
-    ${uiState.showLoginModal ? renderExploreLoginModal() : ""}
     ${uiState.showProfileEditModal ? renderProfileEditModal() : ""}
   `;
 }
@@ -8352,8 +8425,8 @@ function pageSettings() {
 
 const renderers = {
   "#/auth/login": pageLogin,
-  "#/auth/phone": pageAuthPhone,
-  "#/auth/wechat": pageAuthWechat,
+  "#/auth/phone": pageLogin,
+  "#/auth/wechat": pageLogin,
   "#/theater/home": pageTheater,
   "#/theater/filter": pageFilter,
   "#/search/results": pageSearchResults,
@@ -8430,6 +8503,25 @@ function getCurrentRoutePath() {
 
 function render() {
   const current = getCurrentRoutePath();
+  const currentFullHash = window.location.hash || "#/theater/home";
+  if (!uiState.isLoggedIn && !isAuthRoute(current)) {
+    setPostLoginRedirectHash(currentFullHash);
+    if (currentFullHash !== "#/auth/login") {
+      window.location.hash = "#/auth/login";
+      return;
+    }
+  }
+  if (uiState.isLoggedIn && hasAuthSessionExpired()) {
+    performLogoutAndRedirectToLogin();
+    return;
+  }
+  if (uiState.isLoggedIn && isAuthRoute(current)) {
+    const next = consumePostLoginRedirectHash();
+    if (currentFullHash !== next) {
+      window.location.hash = next;
+      return;
+    }
+  }
   const active = document.activeElement instanceof HTMLInputElement
     ? document.activeElement
     : null;
@@ -8559,6 +8651,7 @@ let messageRealtimeSyncRunner = null;
 let messageRealtimeEventSource = null;
 let messageRealtimeConnectedUserId = "";
 let messageRealtimeReconnectTimer = null;
+let mobileViewportBaseline = 0;
 
 function scrollThreadToBottom(retry = 0) {
   requestAnimationFrame(() => {
@@ -8777,8 +8870,8 @@ document.addEventListener("click", (event) => {
   }
   const loginAvatarTrigger = event.target.closest(".xh-avatar-btn.guest, .avatar.guest");
   if (loginAvatarTrigger) {
-    uiState.showLoginModal = true;
-    render();
+    setPostLoginRedirectHash(window.location.hash || "#/theater/home");
+    window.location.hash = "#/auth/login";
     return;
   }
   const profileAvatarTrigger = event.target.closest(".user-avatar-click");
@@ -9166,15 +9259,10 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "me-logout") {
-      uiState.isLoggedIn = false;
-      uiState.currentUserId = "";
-      uiState.bootstrapFullLoaded = false;
-      uiState.bootstrapFullLoading = false;
-      persistAuthUserId();
       uiState.showProfileEditModal = false;
       uiState.meFeedback = "";
-      uiState.showLoginModal = true;
-      render();
+      setPostLoginRedirectHash("#/theater/home");
+      performLogoutAndRedirectToLogin();
       return;
     }
     if (action === "open-message-thread") {
@@ -11135,17 +11223,16 @@ document.addEventListener("click", (event) => {
     }
 
     if (action === "open-login-modal") {
-      uiState.showLoginModal = true;
+      setPostLoginRedirectHash(window.location.hash || "#/theater/home");
+      window.location.hash = "#/auth/login";
       uiState.loginError = "";
-      render();
       return;
     }
 
     if (action === "close-login-modal") {
-      uiState.showLoginModal = false;
+      window.location.hash = "#/auth/login";
       uiState.loginError = "";
       uiState.loginLoading = false;
-      render();
       return;
     }
 
@@ -11181,9 +11268,7 @@ document.addEventListener("click", (event) => {
         }
         return;
       }
-      uiState.isLoggedIn = true;
-      uiState.showLoginModal = false;
-      uiState.loginError = "";
+      uiState.loginError = "手机号登录暂未接入，请先使用账号密码登录";
       uiState.loginLoading = false;
       render();
       return;
@@ -11194,11 +11279,10 @@ document.addEventListener("click", (event) => {
   if (!target) return;
   let go = target.getAttribute("data-go");
   if (!go) return;
-  const isPublicBackstageRoute = go.startsWith("#/messages/story");
-  const protectedMessageRoute = go.startsWith("#/messages") && !isPublicBackstageRoute && go !== "#/messages/detail";
-  if (protectedMessageRoute && !uiState.isLoggedIn) {
-    uiState.showLoginModal = true;
-    go = "#/messages/chat";
+  const routePath = go.split("?")[0] || go;
+  if (!uiState.isLoggedIn && !isAuthRoute(routePath)) {
+    setPostLoginRedirectHash(go);
+    go = "#/auth/login";
   }
   if (go === "#/me/home" && !(target.getAttribute("data-preserve-viewed-profile") === "1")) {
     uiState.meViewedUserId = "";
@@ -11609,11 +11693,24 @@ function syncMobileViewportForThread() {
   const vv = window.visualViewport;
   const visualHeightPx = vv?.height || innerHeightPx;
   const visualTopPx = vv?.offsetTop || 0;
-  const keyboardOffset = Math.max(0, innerHeightPx - visualHeightPx - visualTopPx);
+  const routePath = getCurrentRoutePath();
+  const onThread = routePath.startsWith("#/messages/thread");
+
+  const baselineCandidate = Math.max(
+    mobileViewportBaseline || 0,
+    innerHeightPx,
+    document.documentElement.clientHeight || 0,
+    Math.round(visualHeightPx + visualTopPx)
+  );
+  mobileViewportBaseline = baselineCandidate;
+
+  let keyboardOffset = Math.max(0, mobileViewportBaseline - visualHeightPx - visualTopPx);
+  if (keyboardOffset < 20) keyboardOffset = 0;
+
   root.style.setProperty("--app-inner-height", `${Math.round(innerHeightPx)}px`);
   root.style.setProperty("--app-visual-height", `${Math.round(visualHeightPx)}px`);
   root.style.setProperty("--keyboard-offset", `${Math.round(keyboardOffset)}px`);
-  const onThread = (window.location.hash || "").startsWith("#/messages/thread");
+
   document.body.classList.toggle("thread-keyboard-open", onThread && keyboardOffset > 24);
 }
 
@@ -11631,7 +11728,10 @@ function ensureThreadInputVisible(target) {
 window.addEventListener("hashchange", () => {
   render();
   syncMobileViewportForThread();
-  const hash = window.location.hash || "";
+  const hash = getCurrentRoutePath();
+  if (!hash.startsWith("#/messages/thread")) {
+    mobileViewportBaseline = 0;
+  }
   if (hash.startsWith("#/messages/thread")) {
     uiState.messageThreadForceBottomUntil = Date.now() + 1800;
     scrollThreadToBottom();
@@ -11646,10 +11746,28 @@ window.addEventListener("focus", () => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
+  if (uiState.isLoggedIn && hasAuthSessionExpired()) {
+    performLogoutAndRedirectToLogin();
+    return;
+  }
   if (typeof messageRealtimeSyncRunner === "function") messageRealtimeSyncRunner();
 });
 
+let authExpiryTimer;
+function ensureAuthExpiryTimer() {
+  if (authExpiryTimer) return;
+  authExpiryTimer = setInterval(() => {
+    if (!uiState.isLoggedIn) return;
+    if (!hasAuthSessionExpired()) return;
+    performLogoutAndRedirectToLogin();
+  }, 15_000);
+}
+
 window.addEventListener("resize", syncMobileViewportForThread, { passive: true });
+window.addEventListener("orientationchange", () => {
+  mobileViewportBaseline = 0;
+  syncMobileViewportForThread();
+}, { passive: true });
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", syncMobileViewportForThread, { passive: true });
   window.visualViewport.addEventListener("scroll", syncMobileViewportForThread, { passive: true });
@@ -11659,6 +11777,20 @@ document.addEventListener("focusin", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
   if (!(window.location.hash || "").startsWith("#/messages/thread")) return;
+  if (target.getAttribute("data-field") === "message-thread-draft" && uiState.messageThreadToolsOpen) {
+    uiState.messageThreadToolsOpen = false;
+    render();
+    requestAnimationFrame(() => {
+      const next = document.querySelector("input[data-field='message-thread-draft']");
+      if (next instanceof HTMLInputElement) {
+        next.focus();
+        next.setSelectionRange(next.value.length, next.value.length);
+        syncMobileViewportForThread();
+        ensureThreadInputVisible(next);
+      }
+    });
+    return;
+  }
   syncMobileViewportForThread();
   ensureThreadInputVisible(target);
 });
@@ -11681,11 +11813,14 @@ async function startApp() {
   const hasCache = authUserId
     ? tryHydrateFullCache(authUserId)
     : tryHydrateFromCache();
-  if (!window.location.hash || window.location.hash === "#/") window.location.hash = "#/theater/home";
+  if (!window.location.hash || window.location.hash === "#/") {
+    window.location.hash = authUserId ? "#/theater/home" : "#/auth/login";
+  }
   if (hasCache && uiState.isLoggedIn && needsFullData(window.location.hash || "#/theater/home")) {
     tryHydrateFullCache(uiState.currentUserId);
   }
   render();
+  ensureAuthExpiryTimer();
   syncMobileViewportForThread();
   if (authUserId) {
     await Promise.allSettled([flushPendingWorldReactions(), flushPendingFollowOps()]);
