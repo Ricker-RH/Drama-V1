@@ -22,6 +22,37 @@ async function assertConversationMember(conversationId, userId) {
   }
 }
 
+export async function listUserInbox({ userId, limit = 80 }) {
+  if (!userId) throw new Error("INVALID_INPUT");
+  const safeLimit = Math.min(200, Math.max(1, Number.parseInt(String(limit || 80), 10) || 80));
+  const res = await query(
+    `select
+      c.id,
+      c.biz_type,
+      case
+        when c.conversation_type = 'private' then coalesce(uo.nickname, c.title, '私聊会话')
+        else c.title
+      end as title,
+      c.last_message_at,
+      coalesce(cm.unread_count, 0) as unread_count,
+      coalesce(m.content, '') as preview
+    from conversation_members cm
+    join conversations c on c.id = cm.conversation_id
+    left join conversation_members cmo
+      on cmo.conversation_id = c.id
+     and cmo.user_id <> $1
+     and cmo.deleted_at is null
+    left join users uo on uo.id = cmo.user_id
+    left join messages m on m.id = c.last_message_id
+    where cm.user_id = $1
+      and cm.deleted_at is null
+    order by coalesce(c.last_message_at, c.updated_at) desc
+    limit $2`,
+    [userId, safeLimit]
+  );
+  return res.rows;
+}
+
 export async function sendConversationMessage({
   conversationId,
   senderId,

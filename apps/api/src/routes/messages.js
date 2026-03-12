@@ -2,6 +2,7 @@ import { json, parseBody } from "../core/http.js";
 import {
   findOrCreateDirectConversation,
   getConversationPeerPresence,
+  listUserInbox,
   listConversationMessages,
   markConversationRead,
   sendConversationMessage
@@ -9,6 +10,40 @@ import {
 import { invalidateBootstrapCoreCache } from "./bootstrap.js";
 
 export async function handleMessages(req, res, pathname) {
+  if (req.method === "GET" && pathname === "/api/v1/messages/inbox") {
+    const reqUrl = new URL(req.url, "http://127.0.0.1");
+    const userId = String(reqUrl.searchParams.get("userId") || "").trim();
+    const limit = Number.parseInt(String(reqUrl.searchParams.get("limit") || "80"), 10);
+    if (!userId) {
+      return json(res, 400, {
+        code: "INVALID_INPUT",
+        message: "userId is required"
+      });
+    }
+    try {
+      const rows = await listUserInbox({ userId, limit });
+      const inbox = rows.map((row) => {
+        const bizType = row.biz_type;
+        const type =
+          bizType === "community" || bizType === "group" ? "群聊" :
+          bizType === "system" ? "通知" :
+          bizType === "story" ? "故事" : "私聊";
+        return {
+          id: row.id,
+          type,
+          name: row.title || "会话",
+          preview: row.preview || "暂无消息",
+          time: toClock(row.last_message_at),
+          badge: Number(row.unread_count || 0)
+        };
+      });
+      return json(res, 200, { inbox });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "INBOX_FETCH_FAILED";
+      return json(res, 400, { code: msg, message: msg });
+    }
+  }
+
   if (req.method === "GET" && pathname === "/api/v1/messages/thread") {
     const reqUrl = new URL(req.url, "http://127.0.0.1");
     const conversationId = String(reqUrl.searchParams.get("conversationId") || "").trim();

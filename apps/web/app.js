@@ -46,8 +46,8 @@ const COIN_BENEFITS = [];
 const AUTHOR_DIRECTORY = {};
 let DRAMA_HERO_TOTAL = 1;
 const API_BASE = "/api/v1";
-const BOOTSTRAP_CORE_CACHE_KEY = "drama_bootstrap_core_v5";
-const BOOTSTRAP_FULL_CACHE_PREFIX = "drama_bootstrap_full_v5_";
+const BOOTSTRAP_CORE_CACHE_KEY = "drama_bootstrap_core_v6";
+const BOOTSTRAP_FULL_CACHE_PREFIX = "drama_bootstrap_full_v6_";
 const SELECTED_WORLD_ID_CACHE_KEY = "drama_selected_world_id_v4";
 const AUTH_USER_ID_SESSION_KEY = "drama_auth_user_id_session_v2";
 const AUTH_USER_ID_LEGACY_LOCAL_KEY = "drama_auth_user_id_v1";
@@ -214,6 +214,7 @@ function clearLegacyClientCaches() {
     localStorage.removeItem("drama_bootstrap_core_v2");
     localStorage.removeItem("drama_bootstrap_core_v3");
     localStorage.removeItem("drama_bootstrap_core_v4");
+    localStorage.removeItem("drama_bootstrap_core_v5");
     localStorage.removeItem("drama_selected_world_id_v1");
     localStorage.removeItem("drama_selected_world_id_v2");
     localStorage.removeItem("drama_selected_world_id_v3");
@@ -227,6 +228,7 @@ function clearLegacyClientCaches() {
         || key.startsWith("drama_bootstrap_full_v2_")
         || key.startsWith("drama_bootstrap_full_v3_")
         || key.startsWith("drama_bootstrap_full_v4_")
+        || key.startsWith("drama_bootstrap_full_v5_")
       ) {
         removeKeys.push(key);
       }
@@ -3644,6 +3646,36 @@ function updateMessageInboxPreview(messageId, preview) {
   item.preview = preview;
   item.time = nowClockText();
   moveMessageToTop(messageId);
+}
+
+function messageInboxChanged(prev = [], next = []) {
+  if (!Array.isArray(prev) || !Array.isArray(next)) return true;
+  if (prev.length !== next.length) return true;
+  for (let i = 0; i < next.length; i += 1) {
+    const a = prev[i] || {};
+    const b = next[i] || {};
+    if ((a.id || "") !== (b.id || "")) return true;
+    if ((a.badge || 0) !== (b.badge || 0)) return true;
+    if ((a.preview || "") !== (b.preview || "")) return true;
+    if ((a.time || "") !== (b.time || "")) return true;
+    if ((a.name || "") !== (b.name || "")) return true;
+    if ((a.type || "") !== (b.type || "")) return true;
+  }
+  return false;
+}
+
+async function syncMessageInbox() {
+  if (!uiState.isLoggedIn || !uiState.currentUserId) return false;
+  const data = await apiGetJson(`/messages/inbox?userId=${encodeURIComponent(uiState.currentUserId)}&limit=80`);
+  const next = Array.isArray(data?.inbox) ? data.inbox : [];
+  if (!messageInboxChanged(MESSAGE_INBOX, next)) return false;
+  replaceArray(MESSAGE_INBOX, next);
+  const activeId = String(uiState.selectedMessageId || "").trim();
+  if (!activeId || !MESSAGE_INBOX.some((x) => x.id === activeId)) {
+    uiState.selectedMessageId = MESSAGE_INBOX[0]?.id || "";
+    uiState.messageReadAckConversationId = "";
+  }
+  return true;
 }
 
 function pushThreadMessage(messageId, text, from = "me", extra = {}) {
@@ -8421,8 +8453,9 @@ function ensureDramaHeroTimer() {
 let messageRealtimeTimer;
 let messageRealtimeSyncing = false;
 function ensureMessageRealtimeSync() {
-  const onThreadPage = (window.location.hash || "").startsWith("#/messages/thread");
-  const canSync = onThreadPage && uiState.isLoggedIn && Boolean(uiState.currentUserId);
+  const currentHash = window.location.hash || "";
+  const onMessageRoute = currentHash.startsWith("#/messages") && !currentHash.startsWith("#/messages/story");
+  const canSync = onMessageRoute && uiState.isLoggedIn && Boolean(uiState.currentUserId);
   if (!canSync && messageRealtimeTimer) {
     clearInterval(messageRealtimeTimer);
     messageRealtimeTimer = undefined;
@@ -8432,22 +8465,30 @@ function ensureMessageRealtimeSync() {
   const runSync = () => {
     if (messageRealtimeSyncing) return;
     messageRealtimeSyncing = true;
-    void syncActiveConversationThread()
-      .then((changed) => {
+    const liveHash = window.location.hash || "";
+    const liveOnThreadPage = liveHash.startsWith("#/messages/thread");
+    void syncMessageInbox()
+      .then((inboxChanged) => {
+        if (!liveOnThreadPage) return { inboxChanged, threadChanged: false };
+        return syncActiveConversationThread().then((threadChanged) => ({ inboxChanged, threadChanged }));
+      })
+      .then(({ inboxChanged = false, threadChanged = false } = {}) => {
         const activeId = getActiveConversationId();
-        if (activeId && uiState.messageReadAckConversationId !== activeId) {
+        if (liveOnThreadPage && activeId && uiState.messageReadAckConversationId !== activeId) {
           void markConversationReadOnServer(activeId)
             .then(() => {
               uiState.messageReadAckConversationId = activeId;
             })
             .catch(() => {});
         }
-        if (changed) {
+        if (inboxChanged || threadChanged) {
           render();
-          requestAnimationFrame(() => {
-            const wrap = document.querySelector(".dm-modern-messages");
-            if (wrap) wrap.scrollTop = wrap.scrollHeight;
-          });
+          if (threadChanged) {
+            requestAnimationFrame(() => {
+              const wrap = document.querySelector(".dm-modern-messages");
+              if (wrap) wrap.scrollTop = wrap.scrollHeight;
+            });
+          }
         }
       })
       .catch(() => {})
