@@ -58,8 +58,11 @@ async function generateOneImage({
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-      const message = data?.error?.message || data?.message || `HTTP_${resp.status}`;
-      throw new Error(message);
+      const rawMessage = data?.error?.message || data?.message || `HTTP_${resp.status}`;
+      if (String(rawMessage).toLowerCase().includes("not open")) {
+        throw new Error("IMAGE_API_NOT_OPEN: 当前图像接口未开通，请检查图片专用 API Key 与服务商权限");
+      }
+      throw new Error(rawMessage);
     }
     const item = Array.isArray(data?.data) ? data.data[0] : null;
     const b64 = String(item?.b64_json || "").trim();
@@ -87,9 +90,9 @@ export async function handlePaint(req, res, pathname) {
     return json(res, 400, { code: "INVALID_INPUT", message: "prompt is required" });
   }
 
-  const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
+  const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
   if (!apiKey) {
-    return json(res, 500, { code: "OPENAI_KEY_MISSING", message: "OPENAI_API_KEY is missing" });
+    return json(res, 500, { code: "OPENAI_KEY_MISSING", message: "OPENAI_IMAGE_API_KEY / OPENAI_API_KEY is missing" });
   }
   const apiBase = String(process.env.OPENAI_IMAGE_BASE_URL || "https://api.openai.com/v1").trim();
   const size = mapRatioToSize(ratio);
