@@ -1041,7 +1041,13 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
         ? `
       <div class="xh-mobile-shell">
         <div class="xh-mobile-top">
-          <div class="xh-mobile-top-left"></div>
+          <div class="xh-mobile-top-left">
+            ${
+              isHomeRoute
+                ? `<img class="xh-mobile-home-logo" src="/assets/logo-v3.png" alt="爪马 Logo" />`
+                : ""
+            }
+          </div>
           <div class="xh-mobile-tabs">
             ${mobileTopTabs
               .map(
@@ -1052,7 +1058,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
               .join("")}
           </div>
           <div class="xh-mobile-right">
-            <button class="xh-mobile-top-search-btn ${activeSearchPanelOpen ? "active" : ""}" data-action="open-search-panel" aria-label="搜索">⌕</button>
+            <button class="xh-mobile-top-search-btn ${activeSearchPanelOpen ? "active" : ""} ${isHomeRoute ? "plain-home" : ""}" data-action="open-search-panel" aria-label="搜索">⌕</button>
             ${
               showHeadCoin
                 ? `<button class="xh-coin-chip" data-go="#/me/coins">🪙 ${(uiState.isLoggedIn ? uiState.userCoins : 0).toLocaleString()}</button>`

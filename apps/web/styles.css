@@ -8238,6 +8238,14 @@ code {
 
   .xh-mobile-top-left {
     min-width: 1px;
+    display: flex;
+    align-items: center;
+  }
+
+  .xh-mobile-home-logo {
+    width: 34px;
+    height: 34px;
+    object-fit: contain;
   }
 
   .xh-mobile-addon {
@@ -8331,6 +8339,24 @@ code {
   .xh-mobile-top-search-btn.active {
     background: #f2ecff;
     border-color: rgba(124, 92, 255, 0.36);
+  }
+
+  .xh-mobile-top-search-btn.plain-home {
+    width: auto;
+    height: auto;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: #6953c8;
+    padding: 0;
+    font-size: 24px;
+    box-shadow: none;
+  }
+
+  .xh-mobile-top-search-btn.plain-home.active {
+    background: transparent;
+    border-color: transparent;
+    color: #5b43c4;
   }
 
   .xh-mobile-right {
