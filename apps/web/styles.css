@@ -8620,11 +8620,15 @@ code {
   }
 
   .xh-shell.mobile-top-visible.top-nav-linked.is-backstage-route {
-    padding-top: calc(58px + env(safe-area-inset-top));
+    padding-top: calc(52px + env(safe-area-inset-top));
   }
 
   .xh-shell.mobile-top-visible.top-nav-linked .backstage-hero {
     margin-top: 0;
+  }
+
+  .xh-shell.mobile-top-visible.top-nav-linked.is-backstage-route .backstage-hero {
+    margin-top: -2px;
   }
 
   .layout.explore-mode .content {
