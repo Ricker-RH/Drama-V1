@@ -323,6 +323,7 @@ const uiState = {
   dynamicComposerType: "图文",
   dynamicDraftText: "",
   dynamicDraftTitle: "",
+  dynamicPublishFeedback: "",
   dynamicPosts: [],
   selectedDynamicId: null,
   dynamicMeta: {},
@@ -518,6 +519,9 @@ const uiState = {
   workshopPaintGenerating: false,
   workshopPaintResults: [],
   workshopPaintFeedback: "",
+  workshopPaintCategory: "all",
+  workshopPaintSort: "latest",
+  workshopPaintComposerOpen: false,
   playRound: 1,
   playChapter: getWorldProfile(FEED_DATA[0]).chapter,
   worldCommentDraftByCard: {},
@@ -4154,19 +4158,13 @@ async function apiSseJson(path, payload, handlers = {}) {
 async function createDynamicPostAndSync({ title, text, type }) {
   if (!uiState.currentUserId) throw new Error("USER_NOT_READY");
   const postType = type === "视频" ? "video" : type === "故事卡" ? "story_card" : type === "文字" ? "text" : "image";
-  const resp = await fetch(`${API_BASE}/posts`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      authorId: uiState.currentUserId,
-      postType,
-      title,
-      content: text,
-      linkedWorldCardId: getSelectedWorld()?.id || null
-    })
+  const data = await apiJson("/posts", {
+    authorId: uiState.currentUserId,
+    postType,
+    title,
+    content: text,
+    linkedWorldCardId: getSelectedWorld()?.id || null
   });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data?.message || data?.code || `HTTP_${resp.status}`);
   const row = data?.post;
   if (!row?.id) throw new Error("POST_CREATE_FAILED");
   const dynamic = {
@@ -4183,8 +4181,13 @@ async function createDynamicPostAndSync({ title, text, type }) {
     comments: 0,
     worldId: row.linked_world_card_id || getSelectedWorld()?.id || null
   };
-  uiState.dynamicPosts.unshift(dynamic);
+  const cleanDynamicPosts = uiState.dynamicPosts.filter((x) => String(x?.id || "") !== dynamic.id);
+  uiState.dynamicPosts = [dynamic, ...cleanDynamicPosts].slice(0, 30);
+  const cleanFeed = DYNAMIC_FEED.filter((x) => String(x?.id || "") !== dynamic.id);
+  DYNAMIC_FEED.splice(0, DYNAMIC_FEED.length, dynamic, ...cleanFeed.slice(0, 119));
+  persistDynamicItemToCache(dynamic);
   uiState.selectedDynamicId = dynamic.id;
+  return dynamic;
 }
 
 function syncDynamicItemMetrics(postId, patch = {}) {
@@ -4404,6 +4407,37 @@ function patchWorldMetricsInPayload(payload, worldCardId, patch = {}) {
   feed[idx] = { ...feed[idx], ...patch };
   payload.feedData = feed;
   return true;
+}
+
+function prependDynamicItemInPayload(payload, dynamicItem) {
+  if (!payload || typeof payload !== "object" || !dynamicItem?.id) return false;
+  const list = Array.isArray(payload.dynamicFeed) ? payload.dynamicFeed : [];
+  const deduped = list.filter((x) => String(x?.id || "") !== String(dynamicItem.id));
+  payload.dynamicFeed = [dynamicItem, ...deduped].slice(0, 120);
+  return true;
+}
+
+function persistDynamicItemToCache(dynamicItem) {
+  try {
+    const rawCore = localStorage.getItem(BOOTSTRAP_CORE_CACHE_KEY);
+    if (rawCore) {
+      const core = JSON.parse(rawCore);
+      if (prependDynamicItemInPayload(core, dynamicItem)) {
+        localStorage.setItem(BOOTSTRAP_CORE_CACHE_KEY, JSON.stringify(core));
+      }
+    }
+  } catch {}
+  try {
+    const uid = String(uiState.currentUserId || "").trim();
+    if (!uid) return;
+    const fullKey = `${BOOTSTRAP_FULL_CACHE_PREFIX}${uid}`;
+    const rawFull = localStorage.getItem(fullKey);
+    if (!rawFull) return;
+    const full = JSON.parse(rawFull);
+    if (prependDynamicItemInPayload(full, dynamicItem)) {
+      localStorage.setItem(fullKey, JSON.stringify(full));
+    }
+  } catch {}
 }
 
 function persistWorldMetricsToCache(worldCardId, patch = {}) {
@@ -5925,10 +5959,29 @@ function buildWorkshopPaintPreviewUrls({
   const n = String(negative || "").trim();
   const { width, height } = getWorkshopPaintSizeByRatio(ratio);
   const basePrompt = `${p}, ${s} style, highly detailed, best quality${n ? `, avoid: ${n}` : ""}`;
+  const normalizedPrompt = `${p} ${n}`.toLowerCase();
+  const category = /\bnsfw\b|成人|露骨|情色/.test(normalizedPrompt)
+    ? "nsfw"
+    : (/\banime\b|动漫|二次元/.test(normalizedPrompt) || s === "anime")
+      ? "anime"
+      : "sfw";
   return new Array(4).fill(0).map((_, idx) => {
     const seed = Math.floor(Math.random() * 100000) + idx * 97;
     const src = `https://image.pollinations.ai/prompt/${encodeURIComponent(basePrompt)}?seed=${seed}&width=${width}&height=${height}&nologo=true`;
-    return { id: `paint_${Date.now()}_${idx}`, url: src, seed, width, height };
+    const fallbackUrl = `https://picsum.photos/seed/drama-paint-${seed}/${width}/${height}`;
+    return {
+      id: `paint_${Date.now()}_${idx}`,
+      url: src,
+      fallbackUrl,
+      seed,
+      width,
+      height,
+      style: s,
+      ratio,
+      category,
+      prompt: p,
+      createdAt: Date.now() + idx
+    };
   });
 }
 
@@ -6247,61 +6300,185 @@ function pageWorkshopCharacterEditor() {
   return pageWorkshop();
 }
 
+function getWorkshopPaintGalleryCards() {
+  const placeholders = [
+    "https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1526379095098-d400fd0bf935?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1516321497487-e288fb19713f?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1555949963-ff9fe0c870eb?auto=format&fit=crop&w=1200&q=80",
+    "https://images.unsplash.com/photo-1517694712202-14dd9538aa97?auto=format&fit=crop&w=1200&q=80"
+  ];
+  const source = Array.isArray(uiState.workshopPaintResults) && uiState.workshopPaintResults.length
+    ? uiState.workshopPaintResults
+    : placeholders.map((url, idx) => ({
+      id: `sample_${idx + 1}`,
+      url,
+      fallbackUrl: url,
+      seed: 3000 + idx,
+      width: 1024,
+      height: 1024,
+      style: idx % 2 === 0 ? "anime" : "cinematic",
+      category: idx % 4 === 0 ? "anime" : "sfw",
+      prompt: "科技都市插画",
+      createdAt: Date.now() - idx * 60000
+    }));
+  const cards = [];
+  for (let i = 0; i < source.length; i += 4) {
+    const block = source.slice(i, i + 4);
+    while (block.length < 4 && source.length) block.push(source[block.length % source.length]);
+    const seed = Number(block[0]?.seed || i + 1);
+    const like = seed % 17;
+    const comment = seed % 7;
+    cards.push({
+      id: `gallery_${i}`,
+      title: `创作草图 ${Math.floor(i / 4) + 1}`,
+      author: String(uiState.profile?.name || "ZR"),
+      authorTag: String(uiState.profile?.name || "ZR").slice(0, 2).toUpperCase(),
+      images: block.map((x) => ({
+        url: x.url,
+        fallbackUrl: x.fallbackUrl || x.url
+      })),
+      category: block[0]?.category || "sfw",
+      style: block[0]?.style || "cinematic",
+      like,
+      comment,
+      createdAt: Number(block[0]?.createdAt || Date.now()),
+      timeText: `${(Math.floor(seed % 5) + 1)} 分钟前`
+    });
+  }
+  return cards;
+}
+
 function pageWorkshopPaint() {
   const styleOptions = [
     { value: "cinematic", label: "电影感" },
-    { value: "anime", label: "二次元" },
+    { value: "anime", label: "动漫" },
     { value: "realistic", label: "写实" },
     { value: "illustration", label: "插画" },
     { value: "watercolor", label: "水彩" },
     { value: "pixel art", label: "像素风" }
   ];
   const ratioOptions = ["1:1", "16:9", "9:16", "4:3", "3:4"];
-  const hasResults = Array.isArray(uiState.workshopPaintResults) && uiState.workshopPaintResults.length > 0;
+  const categoryTabs = [
+    { key: "all", label: "全部" },
+    { key: "sfw", label: "SFW" },
+    { key: "nsfw", label: "NSFW" },
+    { key: "anime", label: "动漫" }
+  ];
+  const sortTabs = [
+    { key: "latest", label: "最新" },
+    { key: "hot", label: "热门" },
+    { key: "top_like", label: "最多点赞" }
+  ];
+  let cards = getWorkshopPaintGalleryCards();
+  if (uiState.workshopPaintCategory !== "all") {
+    cards = cards.filter((item) => item.category === uiState.workshopPaintCategory);
+  }
+  if (uiState.workshopPaintSort === "hot") {
+    cards = [...cards].sort((a, b) => (b.like + b.comment) - (a.like + a.comment));
+  } else if (uiState.workshopPaintSort === "top_like") {
+    cards = [...cards].sort((a, b) => b.like - a.like);
+  } else {
+    cards = [...cards].sort((a, b) => b.createdAt - a.createdAt);
+  }
   return renderExploreShell(`
-    <section class="workshop-studio workshop-paint-page">
-      <header class="workshop-editor-head workshop-paint-head">
-        <h2>AI画图</h2>
-        <p>写下你想要的画面描述，选择风格与比例，一键生成灵感图。</p>
+    <section class="workshop-studio workshop-paint-page workshop-gallery-page">
+      <header class="workshop-gallery-banner">
+        <div class="workshop-gallery-banner-copy">
+          <h2>画廊</h2>
+        </div>
+        <button class="workshop-gallery-create-btn" data-action="workshop-paint-toggle-composer">✧ 创作</button>
       </header>
-      <article class="workshop-paint-panel">
-        <div class="workshop-paint-grid">
-          <label>正向提示词
-            <textarea data-field="workshop-paint-prompt" placeholder="例如：雨夜霓虹街头，少女撑透明伞站在路口，电影光影，细节丰富">${escapeHtml(uiState.workshopPaintPrompt || "")}</textarea>
-          </label>
-          <label>负向提示词（可选）
-            <textarea data-field="workshop-paint-negative" placeholder="例如：低清晰度、模糊、畸形手指、文字水印">${escapeHtml(uiState.workshopPaintNegativePrompt || "")}</textarea>
-          </label>
-          <label>画面风格
-            <select data-field="workshop-paint-style">
-              ${styleOptions.map((item) => `<option value="${item.value}" ${uiState.workshopPaintStyle === item.value ? "selected" : ""}>${item.label}</option>`).join("")}
-            </select>
-          </label>
-          <label>图片比例
-            <select data-field="workshop-paint-ratio">
-              ${ratioOptions.map((item) => `<option value="${item}" ${uiState.workshopPaintRatio === item ? "selected" : ""}>${item}</option>`).join("")}
-            </select>
-          </label>
-        </div>
-        <div class="workshop-paint-actions">
-          <button class="primary" data-action="workshop-paint-generate" ${uiState.workshopPaintGenerating ? "disabled" : ""}>${uiState.workshopPaintGenerating ? "生成中..." : "开始生成"}</button>
-          <button data-action="workshop-paint-clear">清空结果</button>
-        </div>
-        ${uiState.workshopPaintFeedback ? `<p class="workshop-feedback">${escapeHtml(uiState.workshopPaintFeedback)}</p>` : ""}
-      </article>
-      <section class="workshop-paint-result-grid">
+
+      <div class="workshop-gallery-tabs">
+        ${categoryTabs.map((tab) => `
+          <button
+            class="${uiState.workshopPaintCategory === tab.key ? "active" : ""}"
+            data-action="workshop-paint-category"
+            data-key="${tab.key}"
+          >${tab.label}</button>
+        `).join("")}
+      </div>
+
+      <div class="workshop-gallery-sort">
+        ${sortTabs.map((tab) => `
+          <button
+            class="${uiState.workshopPaintSort === tab.key ? "active" : ""}"
+            data-action="workshop-paint-sort"
+            data-key="${tab.key}"
+          >${tab.label}</button>
+        `).join("")}
+      </div>
+
+      ${
+        uiState.workshopPaintComposerOpen
+          ? `
+        <article class="workshop-paint-panel workshop-gallery-compose">
+          <div class="workshop-paint-grid">
+            <label>正向提示词
+              <textarea data-field="workshop-paint-prompt" placeholder="例如：雨夜霓虹街头，少女撑透明伞站在路口，电影光影，细节丰富">${escapeHtml(uiState.workshopPaintPrompt || "")}</textarea>
+            </label>
+            <label>负向提示词（可选）
+              <textarea data-field="workshop-paint-negative" placeholder="例如：低清晰度、模糊、畸形手指、文字水印">${escapeHtml(uiState.workshopPaintNegativePrompt || "")}</textarea>
+            </label>
+            <label>画面风格
+              <select data-field="workshop-paint-style">
+                ${styleOptions.map((item) => `<option value="${item.value}" ${uiState.workshopPaintStyle === item.value ? "selected" : ""}>${item.label}</option>`).join("")}
+              </select>
+            </label>
+            <label>图片比例
+              <select data-field="workshop-paint-ratio">
+                ${ratioOptions.map((item) => `<option value="${item}" ${uiState.workshopPaintRatio === item ? "selected" : ""}>${item}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="workshop-paint-actions">
+            <button class="primary" data-action="workshop-paint-generate" ${uiState.workshopPaintGenerating ? "disabled" : ""}>${uiState.workshopPaintGenerating ? "生成中..." : "开始生成"}</button>
+            <button data-action="workshop-paint-clear">清空结果</button>
+            <button data-action="workshop-paint-toggle-composer">收起</button>
+          </div>
+        </article>
+      `
+          : ""
+      }
+
+      ${uiState.workshopPaintFeedback ? `<p class="workshop-feedback">${escapeHtml(uiState.workshopPaintFeedback)}</p>` : ""}
+
+      <section class="workshop-gallery-grid">
         ${
-          hasResults
-            ? uiState.workshopPaintResults.map((item, idx) => `
-              <article class="workshop-paint-card">
-                <img src="${escapeHtml(item.url || "")}" alt="AI画图结果 ${idx + 1}" loading="lazy" />
-                <footer>
-                  <span>Seed ${item.seed}</span>
-                  <small>${item.width} × ${item.height}</small>
-                </footer>
+          cards.length
+            ? cards.map((item) => `
+              <article class="workshop-gallery-card">
+                <div class="workshop-gallery-collage">
+                  ${item.images.map((img, idx) => `
+                    <img
+                      class="workshop-paint-image"
+                      src="${escapeHtml(img.url || "")}"
+                      data-fallback-src="${escapeHtml(img.fallbackUrl || "")}"
+                      alt="${escapeHtml(item.title)}-${idx + 1}"
+                      loading="lazy"
+                      referrerpolicy="no-referrer"
+                    />
+                  `).join("")}
+                </div>
+                <div class="workshop-gallery-card-body">
+                  <h4>${escapeHtml(item.title)}</h4>
+                  <div class="workshop-gallery-author-row">
+                    <span class="workshop-gallery-author-dot">${escapeHtml(item.authorTag)}</span>
+                    <strong>${escapeHtml(item.author)}</strong>
+                    <em>${escapeHtml(item.timeText)}</em>
+                  </div>
+                  <div class="workshop-gallery-metrics">
+                    <span>👍 ${item.like}</span>
+                    <span>💬 ${item.comment}</span>
+                  </div>
+                </div>
               </article>
             `).join("")
-            : '<p class="workshop-paint-empty">还没有生成结果，先输入提示词试试。</p>'
+            : '<p class="workshop-paint-empty">当前分类下暂无图片，试试切换分类或点击创作。</p>'
         }
       </section>
     </section>
@@ -6927,9 +7104,18 @@ function pageCommunityDismiss() {
 }
 
 function getBackstageFeedByTab() {
+  const merged = [...uiState.dynamicPosts, ...DYNAMIC_FEED];
+  const unique = [];
+  const seen = new Set();
+  merged.forEach((item) => {
+    const id = String(item?.id || "");
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    unique.push(item);
+  });
   const source = uiState.dynamicTab === "推荐"
-    ? [...uiState.dynamicPosts, ...DYNAMIC_FEED]
-    : [...uiState.dynamicPosts, ...DYNAMIC_FEED.filter((item) => item.tab === uiState.dynamicTab)];
+    ? unique
+    : unique.filter((item) => item.tab === uiState.dynamicTab);
   return source.slice(0, 30);
 }
 
@@ -6968,6 +7154,7 @@ function pageMessages() {
   return renderExploreShell(`
     <section class="dynamic-page">
       ${renderBackstageHero()}
+      ${uiState.dynamicPublishFeedback ? `<div class="msg-action-feedback dynamic-publish-feedback">${escapeHtml(uiState.dynamicPublishFeedback)}</div>` : ""}
 
       <div class="dynamic-tabs">
         ${DYNAMIC_TABS.map((tab) => `<button class="${uiState.dynamicTab === tab ? "active" : ""}" data-action="set-dynamic-tab" data-tab="${tab}">${tab}</button>`).join("")}
@@ -6985,6 +7172,7 @@ function pageBackstageDynamic() {
   return renderExploreShell(`
     <section class="dynamic-page">
       ${renderBackstageHero()}
+      ${uiState.dynamicPublishFeedback ? `<div class="msg-action-feedback dynamic-publish-feedback">${escapeHtml(uiState.dynamicPublishFeedback)}</div>` : ""}
       <div class="dynamic-tabs">
         ${DYNAMIC_TABS.map((tab) => `<button class="${uiState.dynamicTab === tab ? "active" : ""}" data-action="set-dynamic-tab" data-tab="${tab}">${tab}</button>`).join("")}
       </div>
@@ -7492,6 +7680,24 @@ function pageMe() {
     ["小程序"],
     ["社区公约"]
   ];
+  const formatModeTag = (mode = "") => {
+    if (mode === "virtual_character") return "虚拟人物";
+    if (mode === "short_narrative") return "短叙事";
+    if (mode === "long_narrative") return "长叙事";
+    return "创作";
+  };
+  const splitMetaToTags = (meta = "") =>
+    String(meta || "")
+      .split("·")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+  const splitStatToMetrics = (stat = "") =>
+    String(stat || "")
+      .split("·")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .slice(0, 4);
   return renderExploreShell(`
     <section class="me-page">
       <article class="${coverClass} ${viewingOther ? "me-hero-visitor" : ""}" ${coverStyle}>
@@ -7560,23 +7766,39 @@ function pageMe() {
               ? [
                   ...creatorWorks.map(
                     (x) => `
-              <article class="me-content-item creator-work-card" data-action="noop">
-                <div class="cover creator-cover mode-${x.mode}">
+              <article class="home-card me-home-card creator-work-card" data-action="noop">
+                <div class="home-cover creator-cover mode-${x.mode}">
                   ${x.status !== "published" ? '<div class="creator-draft-mask"><span>草稿箱</span></div>' : ""}
                 </div>
-                <h4>${x.title}</h4>
-                <p>${x.subtitle}</p>
-                <small>${x.status === "published" ? "已发布" : "草稿"} · ${x.summary}</small>
+                <div class="home-body">
+                  <h4>${x.title}</h4>
+                  <div class="home-tags">
+                    <span>${formatModeTag(x.mode)}</span>
+                    <span>${x.status === "published" ? "已发布" : "草稿"}</span>
+                  </div>
+                  <div class="home-author">${escapeHtml(displayedName)}</div>
+                  <div class="home-metrics">
+                    <span>${escapeHtml(x.subtitle || "创作作品")}</span>
+                    <span>${escapeHtml(x.summary || "")}</span>
+                  </div>
+                </div>
               </article>
             `
                   ),
                   ...uniqueFeed.map(
                     (x) => `
-              <article class="me-content-item" ${hasWorldCard(x.id) ? `data-action="open-world-detail" data-id="${x.id}"` : 'data-action="noop"'}>
-                <div class="cover"></div>
-                <h4>${x.title}</h4>
-                <p>${x.meta}</p>
-                <small>${x.stat}</small>
+              <article class="home-card me-home-card" ${hasWorldCard(x.id) ? `data-action="open-world-detail" data-id="${x.id}"` : 'data-action="noop"'}>
+                <div class="home-cover" style="background:${getWorldCoverStyle({ ...x, author: displayedName }, x.id || x.title || "me-card")}"></div>
+                <div class="home-body">
+                  <h4>${x.title}</h4>
+                  <div class="home-tags">
+                    ${splitMetaToTags(x.meta).map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}
+                  </div>
+                  <div class="home-author">${escapeHtml(displayedName)}</div>
+                  <div class="home-metrics">
+                    ${splitStatToMetrics(x.stat).map((s) => `<span>${escapeHtml(s)}</span>`).join("")}
+                  </div>
+                </div>
               </article>
             `
                   )
@@ -7584,11 +7806,18 @@ function pageMe() {
               : uniqueFeed
                   .map(
                     (x) => `
-              <article class="me-content-item" ${hasWorldCard(x.id) ? `data-action="open-world-detail" data-id="${x.id}"` : 'data-action="noop"'}>
-                <div class="cover"></div>
-                <h4>${x.title}</h4>
-                <p>${x.meta}</p>
-                <small>${x.stat}</small>
+              <article class="home-card me-home-card" ${hasWorldCard(x.id) ? `data-action="open-world-detail" data-id="${x.id}"` : 'data-action="noop"'}>
+                <div class="home-cover" style="background:${getWorldCoverStyle({ ...x, author: displayedName }, x.id || x.title || "me-card")}"></div>
+                <div class="home-body">
+                  <h4>${x.title}</h4>
+                  <div class="home-tags">
+                    ${splitMetaToTags(x.meta).map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}
+                  </div>
+                  <div class="home-author">${escapeHtml(displayedName)}</div>
+                  <div class="home-metrics">
+                    ${splitStatToMetrics(x.stat).map((s) => `<span>${escapeHtml(s)}</span>`).join("")}
+                  </div>
+                </div>
               </article>
             `
                   )
@@ -9498,6 +9727,7 @@ document.addEventListener("click", (event) => {
       }
       uiState.dynamicPublishing = true;
       uiState.dynamicShareFeedback = "";
+      uiState.dynamicPublishFeedback = "";
       uiState.dynamicTab = "我的";
       render();
       void createDynamicPostAndSync({ title, text, type: uiState.dynamicComposerType })
@@ -9507,7 +9737,23 @@ document.addEventListener("click", (event) => {
           uiState.dynamicPublishing = false;
           uiState.showDynamicComposer = false;
           uiState.dynamicShareFeedback = "";
+          uiState.dynamicPublishFeedback = "发布成功";
+          window.location.hash = "#/messages/story";
           render();
+          if (uiState.currentUserId) {
+            void bootstrapClientDataFull(uiState.currentUserId)
+              .then(() => {
+                uiState.dynamicTab = "我的";
+                render();
+              })
+              .catch(() => {});
+          }
+          window.setTimeout(() => {
+            if (uiState.dynamicPublishFeedback === "发布成功") {
+              uiState.dynamicPublishFeedback = "";
+              render();
+            }
+          }, 1800);
         })
         .catch((err) => {
           uiState.dynamicPublishing = false;
@@ -10969,6 +11215,28 @@ document.addEventListener("keydown", (event) => {
     executeSearch(target.value);
   }
 });
+
+document.addEventListener("error", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLImageElement)) return;
+  if (!target.classList.contains("workshop-paint-image")) return;
+
+  const fallbackSrc = String(target.getAttribute("data-fallback-src") || "").trim();
+  const triedFallback = target.getAttribute("data-fallback-used") === "1";
+
+  if (!triedFallback && fallbackSrc) {
+    target.setAttribute("data-fallback-used", "1");
+    target.src = fallbackSrc;
+    if (!String(uiState.workshopPaintFeedback || "").includes("备用图源")) {
+      uiState.workshopPaintFeedback = "主图源加载失败，已切换备用图源。";
+      render();
+    }
+    return;
+  }
+
+  uiState.workshopPaintFeedback = "图片加载失败：当前网络无法访问图源，请稍后重试或更换网络。";
+  render();
+}, true);
 
 function scrollCurrentViewToTop() {
   window.scrollTo({ top: 0, left: 0, behavior: "auto" });

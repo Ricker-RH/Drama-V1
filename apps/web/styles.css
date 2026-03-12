@@ -2461,7 +2461,21 @@ body.world-detail-route .layout.explore-mode .content {
   margin-top: 6px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
+}
+
+.me-content-grid .home-card {
+  width: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.me-content-grid .home-body {
+  padding: 8px 9px 10px;
+}
+
+.me-content-grid .home-metrics {
+  margin-top: 8px;
 }
 
 .me-content-item {
@@ -3996,6 +4010,13 @@ body.world-detail-route .layout.explore-mode .content {
   margin: -2px 0 0;
   font-size: 14px;
   color: #dc2626;
+}
+
+.dynamic-publish-feedback {
+  margin-top: 2px;
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
 }
 
 .community-page {
