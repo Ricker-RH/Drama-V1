@@ -43,11 +43,18 @@ const ME_RELATION_USERS = [];
 const COIN_BILLS = [];
 const COIN_TASKS = [];
 const COIN_BENEFITS = [];
+const AUTHOR_DIRECTORY = {};
 let DRAMA_HERO_TOTAL = 1;
 const API_BASE = "/api/v1";
-const BOOTSTRAP_CORE_CACHE_KEY = "drama_bootstrap_core_v4";
-const BOOTSTRAP_FULL_CACHE_PREFIX = "drama_bootstrap_full_v4_";
+const BOOTSTRAP_CORE_CACHE_KEY = "drama_bootstrap_core_v5";
+const BOOTSTRAP_FULL_CACHE_PREFIX = "drama_bootstrap_full_v5_";
 const SELECTED_WORLD_ID_CACHE_KEY = "drama_selected_world_id_v4";
+const AUTH_USER_ID_CACHE_KEY = "drama_auth_user_id_v1";
+const WORLD_INTERACTION_CACHE_PREFIX = "drama_world_interactions_v1_";
+const WORLD_REACTION_PENDING_PREFIX = "drama_world_reaction_pending_v1_";
+const FOLLOW_STATE_CACHE_PREFIX = "drama_follow_state_v1_";
+const FOLLOW_PENDING_PREFIX = "drama_follow_pending_v1_";
+const ME_VIEWED_PROFILE_CACHE_KEY = "drama_me_viewed_profile_v1";
 const PLAY_RESPONSE_POOL = [];
 const PLAY_IDEA_SUGGESTIONS = [
   "先观察人群动线",
@@ -75,7 +82,7 @@ const WORKSHOP_MODE_META = {
     label: "长叙事 · 世界卡",
     kicker: "自由沙盒",
     title: "世界卡编辑器",
-    subtitle: "高自由度、多 NPC、状态持续演化。",
+    subtitle: "",
     guidance: "none"
   },
   short_narrative: {
@@ -95,15 +102,17 @@ const WORKSHOP_MODE_META = {
 };
 const WORKSHOP_AUTHORING_MODE_META = {
   template: {
-    label: "模板录入",
-    desc: "按字段精确填写，质量稳定可控。"
+    label: "表格输入",
+    desc: "逐段填写，清晰可控",
+    icon: "▦"
   },
   custom: {
-    label: "自定义导入",
-    desc: "输入一段设定，AI 拆分成结构字段后再编辑。"
+    label: "自定义输入",
+    desc: "成段设定，AI帮你拆分",
+    icon: "✦"
   }
 };
-const WORKSHOP_FORCE_CUSTOM_MODES = new Set(["long_narrative", "short_narrative", "virtual_character"]);
+const WORKSHOP_FORCE_CUSTOM_MODES = new Set();
 const WORKSHOP_TEMPLATES = {
   long_narrative: [
     {
@@ -202,6 +211,7 @@ function clearLegacyClientCaches() {
     localStorage.removeItem("drama_bootstrap_core_v1");
     localStorage.removeItem("drama_bootstrap_core_v2");
     localStorage.removeItem("drama_bootstrap_core_v3");
+    localStorage.removeItem("drama_bootstrap_core_v4");
     localStorage.removeItem("drama_selected_world_id_v1");
     localStorage.removeItem("drama_selected_world_id_v2");
     localStorage.removeItem("drama_selected_world_id_v3");
@@ -213,6 +223,7 @@ function clearLegacyClientCaches() {
         key.startsWith("drama_bootstrap_full_v1_")
         || key.startsWith("drama_bootstrap_full_v2_")
         || key.startsWith("drama_bootstrap_full_v3_")
+        || key.startsWith("drama_bootstrap_full_v4_")
       ) {
         removeKeys.push(key);
       }
@@ -243,7 +254,20 @@ const uiState = {
   roleScrollLeft: 0,
   isFollowingAuthor: false,
   authorFeedback: "",
-  showUserModal: false,
+  showProfileEditModal: false,
+  showProfileAvatarPreview: false,
+  showWorldShareSheet: false,
+  showWorldShareImageModal: false,
+  worldShareMode: "picker",
+  worldShareSelectedUserId: "",
+  worldShareSelectedUserName: "",
+  worldShareDraft: "",
+  worldShareFeedback: "",
+  profileAvatarPreview: {
+    name: "",
+    handle: "",
+    avatarText: ""
+  },
   modalProfile: null,
   userModalTab: "works",
   reserveFollowed: false,
@@ -251,8 +275,12 @@ const uiState = {
   carouselTimerActive: false,
   showLoginModal: false,
   loginMethod: "phone",
+  accountAuthMode: "login",
   loginAccount: "",
   loginPassword: "",
+  registerAccount: "",
+  registerPassword: "",
+  registerConfirmPassword: "",
   loginPhone: "",
   loginCode: "",
   loginError: "",
@@ -276,8 +304,6 @@ const uiState = {
   communitySearchSort: "相关度",
   userCoins: 0,
   searchAutoFocus: false,
-  viewingSelfProfile: false,
-  isEditingProfile: false,
   profile: {
     name: "Drama 用户",
     handle: "@drama_user",
@@ -311,6 +337,13 @@ const uiState = {
   meFeedback: "",
   meHeroCover: "",
   meMenuOpen: false,
+  meViewedUserId: "",
+  meViewedUserName: "",
+  meStats: {
+    storyCount: 0,
+    likedCount: 0,
+    fansCount: 0
+  },
   meRelationTab: "粉丝",
   meRelationSearch: "",
   meRelationFollowing: {},
@@ -332,7 +365,7 @@ const uiState = {
   messageSearchOpen: false,
   messageSearchQuery: "",
   messageSearchKeyword: "",
-  selectedMessageId: "m_6",
+  selectedMessageId: "",
   messageThreadDraft: "",
   messageThreadToolsOpen: false,
   messageThreadMenuOpen: false,
@@ -341,6 +374,8 @@ const uiState = {
   messageCommentLikes: {},
   messageReplyTargetId: "",
   messageReplyDraft: "",
+  messageReadAckConversationId: "",
+  messagePeerPresence: {},
   messageThreads: {},
   communityMyTab: "joined",
   communityGroupTab: "dynamic",
@@ -475,11 +510,44 @@ const uiState = {
   },
   playRound: 1,
   playChapter: getWorldProfile(FEED_DATA[0]).chapter,
+  worldCommentDraftByCard: {},
+  worldCommentsState: {},
   playSceneImageReady: false,
   playEntries: getProfileOpeningEntries(getWorldProfile(FEED_DATA[0])),
   bootstrapFullLoaded: false,
   bootstrapFullLoading: false
 };
+
+function persistViewedProfile() {
+  try {
+    const id = String(uiState.meViewedUserId || "").trim();
+    const name = String(uiState.meViewedUserName || "").trim();
+    if (!id && !name) {
+      localStorage.removeItem(ME_VIEWED_PROFILE_CACHE_KEY);
+      return;
+    }
+    localStorage.setItem(ME_VIEWED_PROFILE_CACHE_KEY, JSON.stringify({ id, name }));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function restoreViewedProfile() {
+  try {
+    const raw = localStorage.getItem(ME_VIEWED_PROFILE_CACHE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const id = String(parsed?.id || "").trim();
+    const name = String(parsed?.name || "").trim();
+    uiState.meViewedUserId = id;
+    uiState.meViewedUserName = name;
+  } catch {
+    uiState.meViewedUserId = "";
+    uiState.meViewedUserName = "";
+  }
+}
+
+restoreViewedProfile();
 
 function replaceArray(target, next) {
   target.splice(0, target.length, ...(Array.isArray(next) ? next : []));
@@ -524,12 +592,25 @@ function applyBootstrapData(payload, sourceMode = "unknown") {
   uiState.dynamicMeta = {};
   replaceArray(COMMUNITY_LIST, payload?.communityList || []);
   replaceObject(COMMUNITY_POSTS, payload?.communityPosts || {});
+  replaceObject(AUTHOR_DIRECTORY, payload?.authors || {});
+  overlayFollowStateForCurrentUser();
+  if (uiState.modalProfile?.id && AUTHOR_DIRECTORY[uiState.modalProfile.id]) {
+    const nextProfile = buildAuthorProfileByName(uiState.modalProfile.name, uiState.modalProfile.id);
+    uiState.modalProfile = nextProfile;
+    uiState.isFollowingAuthor = Boolean(nextProfile.isFollowedByMe);
+  }
   replaceArray(MESSAGE_INBOX, payload?.messages?.inbox || []);
   replaceArray(MESSAGE_LIKES, payload?.messages?.likes || []);
   replaceArray(MESSAGE_NEW_FOLLOWS, payload?.messages?.follows || []);
   replaceArray(MESSAGE_COMMENTS, payload?.messages?.comments || []);
   replaceObject(uiState.messageThreads, payload?.messages?.threads || {});
   replaceArray(ME_RELATION_USERS, payload?.me?.relationUsers || []);
+  uiState.meRelationFollowing = {};
+  ME_RELATION_USERS.forEach((x) => {
+    const id = String(x?.id || "").trim();
+    if (!id) return;
+    uiState.meRelationFollowing[id] = Boolean(x?.isFollowing || x?.tab === "关注" || x?.tab === "朋友");
+  });
   replaceArray(COIN_BILLS, payload?.me?.coinBills || []);
   replaceArray(COIN_TASKS, payload?.me?.coinTasks || []);
   replaceArray(COIN_BENEFITS, payload?.me?.coinBenefits || []);
@@ -538,10 +619,16 @@ function applyBootstrapData(payload, sourceMode = "unknown") {
   uiState.searchHistory = [...history];
   uiState.communitySearchHistory = [...history];
   const incomingLibrary = payload?.me?.contentLibrary || {};
+  const incomingStats = payload?.me?.stats || {};
   const incomingWorks = Array.isArray(incomingLibrary.works) ? incomingLibrary.works : null;
   const incomingLikes = Array.isArray(incomingLibrary.likes) ? incomingLibrary.likes : null;
   const incomingFavorites = Array.isArray(incomingLibrary.favorites) ? incomingLibrary.favorites : null;
   const incomingHistory = Array.isArray(incomingLibrary.history) ? incomingLibrary.history : null;
+  uiState.meStats = {
+    storyCount: toMetricCount(incomingStats.storyCount),
+    likedCount: toMetricCount(incomingStats.likedCount),
+    fansCount: toMetricCount(incomingStats.fansCount)
+  };
   if (sourceMode === "full") {
     ME_CONTENT_LIBRARY.works = incomingWorks || [];
     ME_CONTENT_LIBRARY.likes = incomingLikes || [];
@@ -565,6 +652,7 @@ function applyBootstrapData(payload, sourceMode = "unknown") {
     const prevUser = uiState.currentUserId;
     uiState.isLoggedIn = true;
     uiState.currentUserId = me.id || "";
+    persistAuthUserId();
     uiState.userCoins = Number(me.coins || 0);
     uiState.profile = {
       name: me.name || "Drama 用户",
@@ -577,11 +665,20 @@ function applyBootstrapData(payload, sourceMode = "unknown") {
       uiState.workshopCardsLoadedForUser = "";
       uiState.workshopSavedCards = [];
       uiState.workshopActiveCardId = "";
+      uiState.meViewedUserId = "";
+      uiState.meViewedUserName = "";
+      persistViewedProfile();
     }
   } else {
     uiState.isLoggedIn = false;
     uiState.currentUserId = "";
+    persistAuthUserId();
     uiState.userCoins = 0;
+    uiState.meStats = {
+      storyCount: 0,
+      likedCount: 0,
+      fansCount: 0
+    };
     ME_CONTENT_LIBRARY.works = [];
     ME_CONTENT_LIBRARY.likes = [];
     ME_CONTENT_LIBRARY.favorites = [];
@@ -589,6 +686,9 @@ function applyBootstrapData(payload, sourceMode = "unknown") {
     uiState.workshopCardsLoadedForUser = "";
     uiState.workshopSavedCards = [];
     uiState.workshopActiveCardId = "";
+    uiState.meViewedUserId = "";
+    uiState.meViewedUserName = "";
+    persistViewedProfile();
   }
 
   if (DYNAMIC_FEED.length > 0 && !uiState.selectedDynamicId) {
@@ -600,6 +700,7 @@ function applyBootstrapData(payload, sourceMode = "unknown") {
   if (!uiState.selectedWorldId && FEED_DATA[0]?.id) {
     uiState.selectedWorldId = FEED_DATA[0].id;
   }
+  overlayWorldInteractionsForCurrentUser();
   persistSelectedWorldId();
   const hasFullMessages = Array.isArray(payload?.messages?.inbox) && payload.messages.inbox.length > 0;
   const hasFullMe = Array.isArray(payload?.me?.coinBills) && payload.me.coinBills.length > 0;
@@ -632,8 +733,30 @@ function setSelectedWorldId(worldId) {
   persistSelectedWorldId();
 }
 
-async function bootstrapClientData() {
-  const resp = await fetch(`${API_BASE}/bootstrap?mode=core`);
+function persistAuthUserId() {
+  try {
+    const id = String(uiState.currentUserId || "").trim();
+    if (!id) {
+      localStorage.removeItem(AUTH_USER_ID_CACHE_KEY);
+      return;
+    }
+    localStorage.setItem(AUTH_USER_ID_CACHE_KEY, id);
+  } catch {}
+}
+
+function hydrateAuthUserId() {
+  try {
+    return String(localStorage.getItem(AUTH_USER_ID_CACHE_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function bootstrapClientData(userId = "") {
+  const query = userId
+    ? `?mode=core&userId=${encodeURIComponent(userId)}`
+    : "?mode=core";
+  const resp = await fetch(`${API_BASE}/bootstrap${query}`);
   if (!resp.ok) throw new Error(`BOOTSTRAP_HTTP_${resp.status}`);
   const data = await resp.json();
   applyBootstrapData(data, "core");
@@ -904,6 +1027,9 @@ function getPageTitleByRoute(hash) {
     "#/play/core": "开刷",
     "#/play/model": "模型模式",
     "#/workshop/world": "创作中心",
+    "#/workshop/world/editor": "世界卡编辑器",
+    "#/workshop/story/editor": "故事卡编辑器",
+    "#/workshop/character/editor": "角色卡编辑器",
     "#/community/create": "创建社区",
     "#/community/post": "动态详情",
     "#/community/group/post": "发动态",
@@ -1030,6 +1156,11 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
   const activeSearchQuery = isCommunitySearchContext ? uiState.communitySearchQuery : uiState.searchQuery;
   const activeSearchPanelOpen = isCommunitySearchContext ? uiState.communitySearchPanelOpen : uiState.searchPanelOpen;
   const activeSearchMode = isCommunitySearchContext ? "community" : "global";
+  const pageTitleActionHtml = currentHash === "#/messages/story/settings"
+    ? `<button class="page-title-action backstage-settings-save-btn" data-action="save-backstage-settings">保存</button>`
+    : currentHash === "#/messages/story/publish"
+      ? `<button class="page-title-action backstage-settings-save-btn" data-action="publish-dynamic" ${uiState.dynamicPublishing ? "disabled" : ""}>${uiState.dynamicPublishing ? "发布中..." : "发布"}</button>`
+      : `<span class="page-title-spacer"></span>`;
   const mobileAddon = mobileAddonHtml.trim();
   const mobileAddonForRender = showMobileTopBar ? mobileAddon : "";
 
@@ -1039,7 +1170,10 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
         ${mainContentHtml}
       </div>
       ${uiState.showLoginModal ? renderExploreLoginModal() : ""}
-      ${uiState.showUserModal ? renderUserProfileModal() : ""}
+      ${uiState.showProfileEditModal ? renderProfileEditModal() : ""}
+      ${uiState.showProfileAvatarPreview ? renderProfileAvatarPreviewModal() : ""}
+      ${uiState.showWorldShareSheet ? renderWorldShareSheet() : ""}
+      ${uiState.showWorldShareImageModal ? renderWorldShareImageModal() : ""}
     `;
   }
 
@@ -1161,7 +1295,7 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
           <div class="xh-subhead page-title-row">
             <button class="xh-back-btn unified-back-btn" data-action="go-back" aria-label="返回">←</button>
             <h2>${pageTitle}</h2>
-            <span class="page-title-spacer"></span>
+            ${pageTitleActionHtml}
           </div>
         `
             : ""
@@ -1185,7 +1319,10 @@ function renderExploreShell(mainContentHtml, mobileAddonHtml = "") {
     `
     }
     ${uiState.showLoginModal ? renderExploreLoginModal() : ""}
-    ${uiState.showUserModal ? renderUserProfileModal() : ""}
+    ${uiState.showProfileEditModal ? renderProfileEditModal() : ""}
+    ${uiState.showProfileAvatarPreview ? renderProfileAvatarPreviewModal() : ""}
+    ${uiState.showWorldShareSheet ? renderWorldShareSheet() : ""}
+    ${uiState.showWorldShareImageModal ? renderWorldShareImageModal() : ""}
   `;
 }
 
@@ -1372,7 +1509,9 @@ function renderSearchResultSection() {
 }
 
 function renderExploreLoginModal() {
-  const method = uiState.loginMethod || "phone";
+  const rawMethod = uiState.loginMethod || "phone";
+  const method = rawMethod === "account" ? "account" : "phone";
+  const accountAuthMode = uiState.accountAuthMode || "login";
   return `
     <div class="login-overlay">
       <div class="login-modal">
@@ -1389,22 +1528,32 @@ function renderExploreLoginModal() {
           <div class="login-switch">
             <button class="${method === "phone" ? "active" : ""}" data-action="set-login-method" data-method="phone">手机号</button>
             <button class="${method === "account" ? "active" : ""}" data-action="set-login-method" data-method="account">账号密码</button>
-            <button class="${method === "wechat" ? "active" : ""}" data-action="set-login-method" data-method="wechat">微信</button>
           </div>
           ${
             method === "account"
               ? `
+            <div class="login-account-mode">
+              <button class="${accountAuthMode === "login" ? "active" : ""}" data-action="set-account-auth-mode" data-mode="login">登录</button>
+              <button class="${accountAuthMode === "register" ? "active" : ""}" data-action="set-account-auth-mode" data-mode="register">注册</button>
+            </div>
+            ${
+              accountAuthMode === "login"
+                ? `
             <div class="login-field-row"><input data-field="login-account" value="${escapeHtml(uiState.loginAccount)}" placeholder="邮箱或昵称" /></div>
             <div class="login-field-row"><input data-field="login-password" value="${escapeHtml(uiState.loginPassword)}" placeholder="密码" type="password" /></div>
             <button class="login-submit" data-action="confirm-login" ${uiState.loginLoading ? "disabled" : ""}>${uiState.loginLoading ? "登录中..." : "账号登录"}</button>
             <p class="login-note">测试账号可用：user1@drama.app / 123456</p>
           `
-              : method === "wechat"
-                ? `
-            <div class="login-qr-box">微信扫码区</div>
-            <button class="login-submit" data-action="confirm-login">微信登录</button>
-          `
                 : `
+            <div class="login-field-row"><input data-field="register-account" value="${escapeHtml(uiState.registerAccount)}" placeholder="设置账号（邮箱或昵称）" /></div>
+            <div class="login-field-row"><input data-field="register-password" value="${escapeHtml(uiState.registerPassword)}" placeholder="设置密码（至少6位）" type="password" /></div>
+            <div class="login-field-row"><input data-field="register-confirm-password" value="${escapeHtml(uiState.registerConfirmPassword)}" placeholder="重新输入密码" type="password" /></div>
+            <button class="login-submit" data-action="confirm-login" ${uiState.loginLoading ? "disabled" : ""}>${uiState.loginLoading ? "注册中..." : "立即注册"}</button>
+            <p class="login-note">注册成功后将自动登录</p>
+          `
+            }
+          `
+              : `
             <div class="login-field-row"><span>+86</span><input data-field="login-phone" value="${escapeHtml(uiState.loginPhone)}" placeholder="输入手机号" /></div>
             <div class="login-field-row"><input data-field="login-code" value="${escapeHtml(uiState.loginCode)}" placeholder="输入验证码" /><button type="button">获取验证码</button></div>
             <button class="login-submit" data-action="confirm-login">验证码登录</button>
@@ -1419,136 +1568,211 @@ function renderExploreLoginModal() {
   `;
 }
 
-function renderUserProfileModal() {
-  const creatorWorks = buildCreatorWorks();
-  const meWorks = (ME_CONTENT_LIBRARY.works || []).slice(0, 12);
-  const meLikes = (ME_CONTENT_LIBRARY.likes || []).slice(0, 12);
-  const meFavorites = (ME_CONTENT_LIBRARY.favorites || []).slice(0, 12);
-  const activeTab = uiState.userModalTab;
-  const self = uiState.viewingSelfProfile;
-  const profile = self ? uiState.profile : (uiState.modalProfile || uiState.profile);
+function renderProfileEditModal() {
   const draft = uiState.profileDraft;
-  const editing = uiState.isEditingProfile;
-  const otherWorks = getModalProfileWorks(profile);
-  const feedByTab = self
-    ? {
-        works: [
-          ...creatorWorks.map((x) => ({ id: "", title: x.title, subtitle: `${x.subtitle} · ${x.status === "published" ? "已发布" : "草稿箱"}`, status: x.status, mode: x.mode, summary: x.summary, draft: true })),
-          ...meWorks.map((x) => ({ id: x.id, title: x.title, subtitle: x.meta, summary: x.stat, draft: false }))
-        ],
-        likes: meLikes.map((x) => ({ id: x.id, title: x.title, subtitle: x.meta, summary: x.stat, draft: false })),
-        favorites: meFavorites.map((x) => ({ id: x.id, title: x.title, subtitle: x.meta, summary: x.stat, draft: false }))
-      }
-    : {
-        works: otherWorks,
-        likes: Array.isArray(uiState.modalProfile?.likes) ? uiState.modalProfile.likes : [],
-        favorites: Array.isArray(uiState.modalProfile?.favorites) ? uiState.modalProfile.favorites : []
-      };
-  const stats = profile.stats || {
-    fans: "12.4万",
-    follows: "312",
-    works: String(feedByTab.works.length || 0),
-    score: "4.8"
-  };
-  const activeFeed = feedByTab[activeTab] || [];
-  const isActiveFeedEmpty = activeFeed.length === 0;
-
   return `
-    <div class="user-modal-overlay">
-      <div class="user-modal-card">
-        <button class="user-modal-close" data-action="close-user-modal">×</button>
-        <section class="world-page user-page">
-          <article class="user-profile-head ios-card">
-            <div class="user-profile-main">
-              <div class="user-profile-avatar">${getAvatarText(profile.name)}</div>
-              <div class="user-profile-meta">
-                <h2>${escapeHtml(profile.name)}</h2>
-                <p>${escapeHtml(profile.handle)}</p>
-                <div class="user-profile-stats">
-                  <span><b>${stats.fans}</b> 粉丝</span>
-                  <span><b>${stats.follows}</b> 关注</span>
-                  <span><b>${stats.works}</b> 作品</span>
-                  <span><b>${stats.score}</b> 综合评分</span>
-                </div>
+    <div class="profile-edit-modal-overlay" data-action="close-profile-edit-modal">
+      <div class="profile-edit-modal-card" data-action="noop">
+        <div class="profile-edit-modal-head">
+          <button class="profile-edit-head-btn" data-action="close-profile-edit-modal">返回</button>
+          <h3>编辑资料</h3>
+          <button class="profile-edit-head-btn primary" data-action="save-profile-edit-modal">保存</button>
+        </div>
+        <section class="profile-edit-modal-body">
+          <div class="user-profile-edit-box">
+            <label>昵称<input class="profile-edit-input" data-field="name" value="${escapeHtml(draft.name)}" /></label>
+            <label>简介标签<input class="profile-edit-input" data-field="handle" value="${escapeHtml(draft.handle)}" /></label>
+            <label>个人介绍<textarea class="profile-edit-input profile-edit-textarea" data-field="bio">${escapeHtml(draft.bio)}</textarea></label>
+            <div class="user-profile-cover-tools">
+              <span>顶部背景</span>
+              <div class="actions">
+                <button class="user-edit-btn subtle" data-action="me-hero-cover-upload">上传背景</button>
+                <button class="user-edit-btn subtle" data-action="me-hero-cover-reset">恢复默认</button>
               </div>
-              <div class="user-profile-actions">
-                ${
-                  self
-                    ? `
-                  ${
-                    editing
-                      ? `
-                    <button class="user-edit-btn" data-action="save-profile-edit">保存资料</button>
-                    <button class="user-edit-btn subtle" data-action="cancel-profile-edit">取消</button>
-                  `
-                      : `
-                    <button class="user-edit-btn" data-action="toggle-edit-profile">编辑资料</button>
-                  `
-                  }
-                `
-                    : `
-                  <button class="user-follow-btn ${uiState.isFollowingAuthor ? "active" : ""}" data-action="toggle-follow-author">
-                    ${uiState.isFollowingAuthor ? "已关注" : "+ 关注"}
-                  </button>
-                  <button class="user-dm-btn" data-go="#/messages/thread">私信</button>
-                `
-                }
-              </div>
+              <input class="me-hero-cover-input" type="file" accept="image/*" data-field="me-hero-cover-file" />
             </div>
-            ${uiState.authorFeedback ? `<div class="user-follow-feedback">${uiState.authorFeedback}</div>` : ""}
-            ${
-              self && editing
-                ? `
-              <div class="user-profile-edit-box">
-                <label>昵称<input class="profile-edit-input" data-field="name" value="${escapeHtml(draft.name)}" /></label>
-                <label>简介标签<input class="profile-edit-input" data-field="handle" value="${escapeHtml(draft.handle)}" /></label>
-                <label>个人介绍<textarea class="profile-edit-input profile-edit-textarea" data-field="bio">${escapeHtml(draft.bio)}</textarea></label>
-                <div class="user-profile-cover-tools">
-                  <span>顶部背景</span>
-                  <div class="actions">
-                    <button class="user-edit-btn subtle" data-action="me-hero-cover-upload">上传背景</button>
-                    <button class="user-edit-btn subtle" data-action="me-hero-cover-reset">恢复默认</button>
-                  </div>
-                  <input class="me-hero-cover-input" type="file" accept="image/*" data-field="me-hero-cover-file" />
-                </div>
-              </div>
-            `
-                : `<p class="user-profile-bio">${escapeHtml(profile.bio)}</p>`
-            }
-          </article>
-
-          <div class="user-tabs ios-card">
-            <button class="${activeTab === "works" ? "active" : ""}" data-action="user-modal-tab" data-tab="works">作品</button>
-            <button class="${activeTab === "likes" ? "active" : ""}" data-action="user-modal-tab" data-tab="likes">喜欢</button>
-            <button class="${activeTab === "favorites" ? "active" : ""}" data-action="user-modal-tab" data-tab="favorites">收藏</button>
           </div>
-
-          <section class="user-feed-grid ${isActiveFeedEmpty ? "is-empty" : ""}">
-            ${activeFeed
-              .map((item) => {
-                const clickable = !item.draft && hasWorldCard(item.id);
-                return `
-              <article class="user-feed-card ${item.draft ? "creator-work-card" : ""}" ${clickable ? `data-action="open-world-detail" data-id="${item.id}"` : 'data-action="noop"'}>
-                <div class="cover ${item.mode ? `creator-cover mode-${item.mode}` : ""}">
-                  ${item.draft && item.status !== "published" ? '<div class="creator-draft-mask"><span>草稿箱</span></div>' : ""}
-                </div>
-                <h4>${item.title}</h4>
-                <p>${item.subtitle}</p>
-                ${item.summary ? `<small>${item.summary}</small>` : ""}
-              </article>
-            `;
-              })
-              .join("")}
-            ${
-              isActiveFeedEmpty
-                ? `
-              <div class="user-feed-empty-tip">暂无内容</div>
-            `
-                : ""
-            }
-          </section>
         </section>
       </div>
+    </div>
+  `;
+}
+
+function renderProfileAvatarPreviewModal() {
+  const name = String(uiState.profileAvatarPreview?.name || uiState.profile?.name || "Drama 用户");
+  const handle = String(uiState.profileAvatarPreview?.handle || uiState.profile?.handle || "@drama_user");
+  const avatarText = String(uiState.profileAvatarPreview?.avatarText || getAvatarText(name));
+  return `
+    <div class="avatar-preview-overlay" data-action="close-profile-avatar-preview">
+      <div class="avatar-preview-modal" data-action="noop">
+        <button class="avatar-preview-close" data-action="close-profile-avatar-preview" aria-label="关闭">×</button>
+        <div class="avatar-preview-bubble">${escapeHtml(avatarText)}</div>
+        <h3>${escapeHtml(name)}</h3>
+        <p>${escapeHtml(handle)}</p>
+      </div>
+    </div>
+  `;
+}
+
+function getWorldShareFriends() {
+  const fromMeRelation = ME_RELATION_USERS.filter(
+    (x) => Boolean(x?.isFollowing || x?.tab === "关注" || x?.tab === "朋友")
+  ).map((x) => ({
+    id: String(x?.id || "").trim(),
+    name: String(x?.name || "").trim()
+  }));
+  const fromAuthorDirectory = Object.values(AUTHOR_DIRECTORY || {})
+    .filter((x) => Boolean(x?.followedByMe))
+    .map((x) => ({
+      id: String(x?.id || "").trim(),
+      name: String(x?.name || "").trim()
+    }));
+  const pool = [...fromMeRelation, ...fromAuthorDirectory];
+  const map = new Map();
+  pool.forEach((x) => {
+    if (!x.name) return;
+    const key = x.id || `name:${x.name}`;
+    if (!map.has(key)) map.set(key, { id: x.id, name: x.name });
+  });
+  return [...map.values()].slice(0, 24);
+}
+
+function buildWorldShareUrl(world = getSelectedWorld()) {
+  const worldId = String(world?.id || uiState.selectedWorldId || "").trim();
+  const hash = window.location.hash || "#/world/detail";
+  const route = hash.split("?")[0] || "#/world/detail";
+  const wid = encodeURIComponent(worldId || "story");
+  return `${window.location.origin}${window.location.pathname}${route}?wid=${wid}`;
+}
+
+function buildWorldShareMessage(world = getSelectedWorld()) {
+  const title = String(world?.title || "这张故事卡");
+  const descRaw = String(world?.desc || "").trim();
+  const desc = descRaw.length > 64 ? `${descRaw.slice(0, 64)}...` : descRaw;
+  const link = buildWorldShareUrl(world);
+  return `${title}\n${desc || "来看看这张故事卡"}\n${link}`;
+}
+
+function copyTextToClipboard(text) {
+  const safe = String(text || "");
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(safe).catch(() => {});
+    return;
+  }
+  const helper = document.createElement("textarea");
+  helper.value = safe;
+  helper.setAttribute("readonly", "readonly");
+  helper.style.position = "fixed";
+  helper.style.opacity = "0";
+  document.body.appendChild(helper);
+  helper.select();
+  try {
+    document.execCommand("copy");
+  } catch {}
+  document.body.removeChild(helper);
+}
+
+function renderWorldShareSheet() {
+  const friends = getWorldShareFriends();
+  const mode = uiState.worldShareMode === "send" ? "send" : "picker";
+  const selectedName = uiState.worldShareSelectedUserName || "";
+  return `
+    <div class="world-share-sheet-overlay" data-action="close-world-share">
+      <section class="world-share-sheet" data-action="noop">
+        <header class="world-share-sheet-head">
+          <h3>${mode === "send" ? "发送给好友" : "分享至"}</h3>
+          <button data-action="close-world-share" aria-label="关闭">×</button>
+        </header>
+        ${
+          mode === "send"
+            ? `
+          <div class="world-share-friends-row">
+            ${friends.map((friend) => `
+              <button
+                class="world-share-friend ${friend.name === selectedName ? "active" : ""}"
+                data-action="world-share-pick-friend"
+                data-user-id="${escapeHtml(friend.id || "")}"
+                data-user-name="${escapeHtml(friend.name)}"
+              >
+                <span>${escapeHtml(getAvatarText(friend.name))}</span>
+                <strong>${escapeHtml(friend.name)}</strong>
+              </button>
+            `).join("")}
+          </div>
+          <div class="world-share-send-box">
+            <p>发送给：${escapeHtml(selectedName || "请选择好友")}</p>
+            <textarea data-field="world-share-draft" placeholder="跟朋友说点什么呢......">${escapeHtml(uiState.worldShareDraft)}</textarea>
+            <button class="world-share-send-btn" data-action="world-share-send" ${selectedName ? "" : "disabled"}>发送</button>
+            <button class="world-share-back-btn" data-action="world-share-back">返回分享方式</button>
+          </div>
+        `
+            : `
+          <div class="world-share-friends-row">
+            ${
+              friends.length
+                ? friends.map((friend) => `
+                  <button
+                    class="world-share-friend"
+                    data-action="world-share-pick-friend"
+                    data-user-id="${escapeHtml(friend.id || "")}"
+                    data-user-name="${escapeHtml(friend.name)}"
+                  >
+                    <span>${escapeHtml(getAvatarText(friend.name))}</span>
+                    <strong>${escapeHtml(friend.name)}</strong>
+                  </button>
+                `).join("")
+                : `<p class="world-share-empty-friends">暂无关注好友，先去关注再分享给好友。</p>`
+            }
+          </div>
+          <div class="world-share-actions-grid">
+            <button class="world-share-action" data-action="world-share-copy-link">
+              <span>🔗</span>
+              <strong>生成卡片分享链接</strong>
+              <small>点击后复制当前卡片网址</small>
+            </button>
+            <button class="world-share-action" data-action="world-share-open-image">
+              <span>🖼️</span>
+              <strong>生成图片分享</strong>
+              <small>打开分享图弹窗</small>
+            </button>
+          </div>
+        `
+        }
+        ${uiState.worldShareFeedback ? `<p class="world-share-feedback">${escapeHtml(uiState.worldShareFeedback)}</p>` : ""}
+      </section>
+    </div>
+  `;
+}
+
+function renderWorldShareImageModal() {
+  const world = getSelectedWorld();
+  const link = buildWorldShareUrl(world);
+  return `
+    <div class="world-share-image-overlay" data-action="close-world-share-image">
+      <section class="world-share-image-modal" data-action="noop">
+        <header class="world-share-image-head">
+          <h3>分享</h3>
+          <button data-action="close-world-share-image" aria-label="关闭">×</button>
+        </header>
+        <p>保存下方图片或复制链接即可分享给好友</p>
+        <article class="world-share-poster">
+          <div class="world-share-poster-cover" style="background:${getWorldCoverStyle(world, world?.id || world?.title || "share")};"></div>
+          <div class="world-share-poster-body">
+            <h4>${escapeHtml(world?.title || "未命名故事卡")}</h4>
+            <p>${escapeHtml((world?.desc || "和我一起玩这个故事吧").slice(0, 120))}</p>
+            <div class="world-share-poster-meta">
+              <span>${escapeHtml(world?.author || "Drama 用户")}</span>
+              <span>${escapeHtml(world?.theme || "主题")}</span>
+              <span>${escapeHtml(world?.format || "模式")}</span>
+            </div>
+          </div>
+        </article>
+        <div class="world-share-link-row">
+          <input value="${escapeHtml(link)}" readonly />
+          <button data-action="world-share-copy-link">复制链接</button>
+        </div>
+        <button class="world-share-image-save" data-action="world-share-download-image">下载分享图</button>
+      </section>
     </div>
   `;
 }
@@ -1917,22 +2141,29 @@ function getAvatarText(name = "") {
   return (n || "玩").slice(0, 1);
 }
 
-function buildAuthorProfileByName(name = "") {
+function buildAuthorProfileByName(name = "", authorId = "") {
   const safeName = String(name || "").trim() || "Drama 用户";
   const works = FEED_DATA.filter((x) => x.author === safeName);
-  const fansBase = 1200 + (hashText(safeName) % 60000);
-  const followsBase = 20 + (hashText(`${safeName}_f`) % 800);
-  const scoreBase = 40 + (hashText(`${safeName}_s`) % 60);
+  const safeAuthorId = String(authorId || "").trim();
+  const byId = safeAuthorId ? AUTHOR_DIRECTORY[safeAuthorId] : null;
+  const needle = normalizeUserName(safeName);
+  const byName = Object.values(AUTHOR_DIRECTORY).find((x) => {
+    const n1 = normalizeUserName(x?.name || "");
+    const n2 = normalizeUserName(x?.handle || "");
+    return Boolean(needle && (n1 === needle || n2 === needle));
+  }) || null;
+  const resolved = byId || byName;
+  const stats = resolved?.stats || {};
   return {
-    id: "",
-    name: safeName,
-    handle: toHandle(safeName),
-    bio: works[0]?.tags?.join(" · ") || "热爱创作与互动剧情",
+    id: resolved?.id || safeAuthorId || "",
+    name: resolved?.name || safeName,
+    handle: resolved?.handle || toHandle(safeName),
+    bio: resolved?.bio || works[0]?.tags?.join(" · ") || "热爱创作与互动剧情",
+    isFollowedByMe: Boolean(resolved?.followedByMe),
     stats: {
-      fans: `${(fansBase / 10000).toFixed(1)}万`,
-      follows: String(followsBase),
-      works: String(works.length),
-      score: `${(scoreBase / 10).toFixed(1)}`
+      fans: formatMetricCount(stats.fansCount || 0),
+      follows: formatMetricCount(stats.followsCount || 0),
+      works: formatMetricCount(stats.worksCount ?? works.length)
     },
     likes: [],
     favorites: []
@@ -1981,23 +2212,32 @@ function resolveUserNameFromNode(node) {
 function openAuthorProfileByName(name = "") {
   const resolved = String(name || "").trim();
   if (!resolved) {
-    if (uiState.isLoggedIn) {
-      uiState.modalProfile = null;
-      uiState.viewingSelfProfile = true;
-      uiState.profileDraft = { ...uiState.profile };
-      uiState.isEditingProfile = false;
-      uiState.showUserModal = true;
+    if (!uiState.isLoggedIn) {
+      uiState.showLoginModal = true;
+      render();
+      return;
     }
+    if (window.location.hash !== "#/me/home") window.location.hash = "#/me/home";
+    else render();
     return;
   }
-  uiState.modalProfile = buildAuthorProfileByName(resolved);
-  uiState.viewingSelfProfile = uiState.isLoggedIn && resolved === uiState.profile.name;
-  if (uiState.viewingSelfProfile) {
-    uiState.modalProfile = null;
-    uiState.profileDraft = { ...uiState.profile };
+  if (uiState.isLoggedIn && resolved === uiState.profile.name) {
+    uiState.meViewedUserId = "";
+    uiState.meViewedUserName = "";
+    persistViewedProfile();
+    if (window.location.hash !== "#/me/home") window.location.hash = "#/me/home";
+    else render();
+    return;
   }
-  uiState.isEditingProfile = false;
-  uiState.showUserModal = true;
+  const resolvedAuthorId = resolveAuthorIdByName(resolved);
+  uiState.meViewedUserId = resolvedAuthorId;
+  uiState.meViewedUserName = resolved;
+  persistViewedProfile();
+  uiState.modalProfile = buildAuthorProfileByName(resolved, resolvedAuthorId);
+  uiState.isFollowingAuthor = Boolean(uiState.modalProfile?.isFollowedByMe);
+  uiState.userModalTab = "works";
+  if (window.location.hash !== "#/me/home") window.location.hash = "#/me/home";
+  else render();
 }
 
 function hashText(text) {
@@ -3011,17 +3251,18 @@ function pageWorldDetail() {
     { name: "柏礼 | 医疗队长", desc: "原则坚定，面对资源稀缺时常以‘最小遗憾’作为决策准则。", keywords: "救治、优先级、人性", cover: "linear-gradient(180deg,#dcfce7 0%,#22c55e 100%)" },
     { name: "姜回 | 灰色中间人", desc: "掌握地下情报网络，立场摇摆不定，却总能提供关键线索。", keywords: "情报、灰度、交易", cover: "linear-gradient(180deg,#e2e8f0 0%,#64748b 100%)" }
   ];
-  const authorProfile = buildAuthorProfileByName(world.author);
-  const authorOtherWorksRaw = FEED_DATA.filter((x) => x.author === world.author && x.id !== world.id);
-  const authorOtherWorks = (authorOtherWorksRaw.length ? authorOtherWorksRaw : FEED_DATA.filter((x) => x.id !== world.id))
-    .slice(0, 3);
+  const authorProfile = buildAuthorProfileByName(world.author, world.authorId);
+  const authorFollowed = Boolean(authorProfile?.isFollowedByMe);
+  const worldCommentState = getWorldCommentState(world?.id, toMetricCount(world?.comment));
+  ensureWorldCardCommentsLoaded(world);
+  const worldCommentDraft = getWorldCommentDraft(world?.id);
 
   return renderExploreShell(`
     <section class="world-page world-rich">
       <div class="world-hero world-carousel">
         <button class="world-hero-back-float unified-back-btn" data-action="go-back" aria-label="返回">←</button>
         <div class="world-hero-nav">
-          <button class="world-hero-share" aria-label="分享">分享</button>
+          <button class="world-hero-share" data-action="open-world-share" aria-label="分享">分享</button>
         </div>
         <img src="${currentSlide}" alt="${world.title}" />
         <div class="world-carousel-actions">
@@ -3036,10 +3277,44 @@ function pageWorldDetail() {
           </div>
           <button data-action="carousel-next">›</button>
         </div>
-        <h1>${world.title}</h1>
-        <p class="world-statline">${escapeHtml(profile.statline)}</p>
-        <div class="world-pill-row">
-          <span>${escapeHtml(world.format)}</span><span>${escapeHtml(world.theme)}</span><span>${escapeHtml(world.setting)}</span><span>${escapeHtml(world.background)}</span>
+        <div class="world-hero-copy">
+          <h1>${world.title}</h1>
+          <p class="world-statline">${escapeHtml(profile.statline)}</p>
+          <section class="world-author-inline world-author-inline-hero">
+            <div class="world-author-inline-strip">
+              <button class="world-author-avatar user-link" data-action="open-user-modal" data-user="${world.author}">${getAvatarText(world.author)}</button>
+              ${
+                isReserveDetail
+                  ? `
+                <span class="world-author-name">${escapeHtml(authorProfile.name)}</span>
+                <span class="world-author-fans">${escapeHtml(authorProfile.stats.fans)} 粉丝</span>
+                <button class="world-author-action-ghost ${uiState.reserveFollowed ? "active" : ""}" data-action="toggle-reserve-follow">${uiState.reserveFollowed ? "★ 已收藏" : "☆ 收藏"}</button>
+                <button class="world-author-action-ghost" data-action="noop">👍︎ 点赞</button>
+                <button class="world-author-action-ghost" data-action="noop">♡ 打赏</button>
+                <button
+                  class="world-author-follow-btn ${authorFollowed ? "active" : ""}"
+                  data-action="toggle-world-author-follow"
+                  data-user-id="${escapeHtml(authorProfile.id || world.authorId || "")}"
+                  data-user="${escapeHtml(authorProfile.name || world.author)}"
+                >${authorFollowed ? "✓ 已关注" : "＋ 关注"}</button>
+                ${uiState.reserveFeedback ? `<small class="reserve-follow-feedback">${uiState.reserveFeedback}</small>` : ""}
+              `
+                  : `
+                <span class="world-author-name">${escapeHtml(authorProfile.name)}</span>
+                <span class="world-author-fans">${escapeHtml(authorProfile.stats.fans)} 粉丝</span>
+                <button class="world-author-action-ghost ${world.liked ? "active" : ""}" data-action="toggle-like-story">👍︎ 赞 ${formatMetricCount(world.like)}</button>
+                <button class="world-author-action-ghost ${world.favorited ? "active" : ""}" data-action="toggle-fav-story">☆ 收藏 ${formatMetricCount(world.star)}</button>
+                <button class="world-author-action-ghost" data-action="noop">♡ 打赏</button>
+                <button
+                  class="world-author-follow-btn ${authorFollowed ? "active" : ""}"
+                  data-action="toggle-world-author-follow"
+                  data-user-id="${escapeHtml(authorProfile.id || world.authorId || "")}"
+                  data-user="${escapeHtml(authorProfile.name || world.author)}"
+                >${authorFollowed ? "✓ 已关注" : "＋ 关注"}</button>
+              `
+              }
+            </div>
+          </section>
         </div>
       </div>
 
@@ -3067,56 +3342,6 @@ function pageWorldDetail() {
         </div>
       </div>
 
-      <div class="world-feature-card ios-card">
-        <div class="world-grid-3 world-feature-grid">
-          <article class="world-module world-feature-module">
-            <h4>玩法亮点</h4>
-            <ul>
-              <li>自由输入行动，AI按规则解析，支持复杂策略表达</li>
-              <li>状态先行，叙事不越界，所有反馈均与当前世界状态绑定</li>
-              <li>关键节点触发插图与高光回放，方便复盘决策路径</li>
-            </ul>
-          </article>
-          <article class="world-module world-feature-module">
-            <h4>入坑理由</h4>
-            <ul>
-              <li>节奏快：3回合内必出冲突钩子，10回合内进入核心战场</li>
-              <li>爽点稳：每局至少1次逆风翻盘，爽点来自策略而非数值堆叠</li>
-              <li>可复玩：多结局和关系树分支，角色线可独立深挖</li>
-            </ul>
-          </article>
-          <article class="world-module world-feature-module">
-            <h4>新手引导</h4>
-            <ul>
-              <li>第 1 回合先观察现场，不急于表态</li>
-              <li>优先保资源，再做关系押注，避免前期透支筹码</li>
-              <li>遇到冲突先问“代价是什么”，再决定是否强推剧情</li>
-            </ul>
-          </article>
-        </div>
-        <div class="world-actions-rail">
-          ${
-            isReserveDetail
-              ? `
-            <button class="world-action-mini world-action-purple world-action-main ${uiState.reserveFollowed ? "active" : ""}" data-action="toggle-reserve-follow">
-              ${uiState.reserveFollowed ? "已关注该新剧" : "关注新剧"}
-            </button>
-            <p class="reserve-follow-note">关注后开播将通过站内消息提醒你，不会错过首更。</p>
-            ${uiState.reserveFeedback ? `<small class="reserve-follow-feedback">${uiState.reserveFeedback}</small>` : ""}
-          `
-              : `
-            <button class="world-action-mini world-action-purple ${world.liked ? "active" : ""}" data-action="toggle-like-story">
-              ${world.liked ? "已喜欢" : "喜欢"} ${formatMetricCount(world.like)}
-            </button>
-            <button class="world-action-mini world-action-purple ${world.favorited ? "active" : ""}" data-action="toggle-fav-story">
-              ${world.favorited ? "已收藏" : "收藏"} ${formatMetricCount(world.star)}
-            </button>
-            <button class="world-action-mini world-action-purple world-action-main" data-go="#/play/core">立即开刷</button>
-          `
-          }
-        </div>
-      </div>
-
       <section class="world-section">
         <h3>核心角色</h3>
         <div class="world-role-scroll">
@@ -3137,99 +3362,115 @@ function pageWorldDetail() {
         </div>
       </section>
 
-      <section class="world-author-section ios-card">
-        <div class="world-author-main">
-          <div class="world-author-left">
-            <button class="world-author-avatar user-link" data-action="open-user-modal" data-user="${world.author}">${getAvatarText(world.author)}</button>
-            <div>
-              <h4>${escapeHtml(authorProfile.name)}</h4>
-              <p>${escapeHtml(authorProfile.bio)} · 累计创作 ${authorProfile.stats.works} 个可玩世界，粉丝 ${authorProfile.stats.fans}。</p>
-            </div>
-          </div>
-          <div class="world-author-right">
-            <button class="world-link-btn" data-action="open-user-modal" data-user="${world.author}">查看作者主页</button>
-          </div>
-        </div>
-        <div class="world-author-works-head">
-          <h3>作者其他作品</h3>
-          <button data-action="open-user-modal" data-user="${world.author}">查看全部</button>
-        </div>
-        <div class="world-works-row">
-          ${authorOtherWorks
-            .map(
-              (item) => `
-            <article data-action="open-world-detail" data-id="${item.id}">
-              <div class="cover" style="background:${item.cover};"></div>
-              <p>《${escapeHtml(item.title)}》· ${escapeHtml(item.theme)} / ${escapeHtml(item.background)}</p>
-            </article>
-          `
-            )
-            .join("")}
-        </div>
-      </section>
-
       <section class="world-comments ios-card">
         <div class="world-comments-head">
-          <h3>共97条评论</h3>
+          <h3>共${formatMetricCount(worldCommentState?.commentsCount || 0)}条评论</h3>
         </div>
         <div class="world-comment-input">
           <span class="avatar user-link" data-action="open-user-modal"></span>
-          <input placeholder="说点什么..." />
+          <input data-field="world-comment-draft" value="${escapeHtml(worldCommentDraft)}" placeholder="说点什么..." />
+          <button class="world-comment-send-btn" data-action="world-comment-submit">${worldCommentState?.submitting ? "发送中..." : "发送"}</button>
         </div>
-        <article class="world-comment-item">
-          <span class="avatar user-link" data-action="open-user-modal"></span>
-          <div>
-            <div class="meta">一锅炖不下 · ♡28</div>
-            <p>这套系统太适合网文玩家了，尤其“状态先行”这一条，真的能明显感觉到每一步都在影响后续，不是那种随便点两下就能爽通关的模板剧情。</p>
-          </div>
-        </article>
-        <article class="world-comment-item">
-          <span class="avatar user-link" data-action="open-user-modal"></span>
-          <div>
-            <div class="meta">青柠剧评人 · ♡19</div>
-            <p>角色关系处理得很好，尤其第六章反转非常自然。我二刷时换了谈判策略，居然开出了完全不同的支线，沉浸感很强。</p>
-          </div>
-        </article>
-        <article class="world-comment-item">
-          <span class="avatar user-link" data-action="open-user-modal"></span>
-          <div>
-            <div class="meta">Rui_夜猫 · ♡14</div>
-            <p>作者把“救援效率”和“公众舆论”这两个系统做得很真实，玩到后面会非常纠结，像在做真实的危机决策。</p>
-          </div>
-        </article>
-        <article class="world-comment-item">
-          <span class="avatar user-link" data-action="open-user-modal"></span>
-          <div>
-            <div class="meta">阿莱同学 · ♡11</div>
-            <p>建议新手先把资源线打稳再冲主线，我第一次太激进直接崩盘。二周目按引导来，体验提升非常明显。</p>
-          </div>
-        </article>
+        ${worldCommentState?.loading ? `<p class="world-comments-loading">评论加载中...</p>` : ""}
+        ${worldCommentState?.error ? `<p class="world-comments-error">评论加载失败：${escapeHtml(worldCommentState.error)}</p>` : ""}
+        ${
+          Array.isArray(worldCommentState?.comments) && worldCommentState.comments.length
+            ? worldCommentState.comments
+              .map((c) => `
+              <article class="world-comment-item">
+                <span class="avatar user-link" data-action="open-user-modal">${escapeHtml(String(c.user || "玩").slice(0, 1))}</span>
+                <div>
+                  <div class="meta">${escapeHtml(c.user || "玩家")} · ${escapeHtml(formatWorldCommentTime(c.createdAt || c.time || ""))}</div>
+                  <p>${escapeHtml(c.text || "")}</p>
+                  <button
+                    class="world-comment-like-btn ${c.likedByMe ? "active" : ""}"
+                    data-action="world-comment-like"
+                    data-id="${escapeHtml(c.id || "")}"
+                    data-liked="${c.likedByMe ? "1" : "0"}"
+                    ${worldCommentState?.likingByCommentId?.[c.id] ? "disabled" : ""}
+                  >♡ ${formatMetricCount(c.likes || 0)}</button>
+                </div>
+              </article>
+            `)
+              .join("")
+            : `<p class="world-comments-empty">还没有评论，来抢首评吧。</p>`
+        }
       </section>
     </section>
   `);
 }
 
 function pageAuthorDetail() {
-  uiState.showUserModal = true;
-  return pageTheater();
-}
+  const currentWorld = getSelectedWorld();
+  const profile = uiState.modalProfile || buildAuthorProfileByName(currentWorld?.author || "Drama 用户", currentWorld?.authorId || "");
+  const activeTab = uiState.userModalTab;
+  const feedByTab = {
+    works: getModalProfileWorks(profile),
+    likes: Array.isArray(profile?.likes) ? profile.likes : [],
+    favorites: Array.isArray(profile?.favorites) ? profile.favorites : []
+  };
+  const stats = profile.stats || {
+    fans: "0",
+    follows: "0",
+    works: String(feedByTab.works.length || 0)
+  };
+  const isFollowing = Boolean(profile?.isFollowedByMe);
+  const activeFeed = feedByTab[activeTab] || [];
+  const isActiveFeedEmpty = activeFeed.length === 0;
+  return renderExploreShell(`
+    <section class="world-page user-page">
+      <article class="user-profile-head ios-card">
+        <div class="user-profile-main">
+          <div class="user-profile-avatar">${getAvatarText(profile.name)}</div>
+          <div class="user-profile-meta">
+            <h2>${escapeHtml(profile.name)}</h2>
+            <p>${escapeHtml(profile.handle)}</p>
+            <div class="user-profile-stats">
+              <span><b>${stats.fans}</b> 粉丝</span>
+              <span><b>${stats.follows}</b> 关注</span>
+              <span><b>${stats.works}</b> 作品</span>
+            </div>
+          </div>
+          <div class="user-profile-actions">
+            <button class="user-follow-btn ${isFollowing ? "active" : ""}" data-action="toggle-follow-author">
+              ${isFollowing ? "已关注" : "+ 关注"}
+            </button>
+            <button class="user-dm-btn" data-action="open-author-dm" data-user="${escapeHtml(profile.name)}" data-user-id="${escapeHtml(profile.id || "")}">私聊</button>
+          </div>
+        </div>
+        ${uiState.authorFeedback ? `<div class="user-follow-feedback">${escapeHtml(uiState.authorFeedback)}</div>` : ""}
+        <p class="user-profile-bio">${escapeHtml(profile.bio || "热爱创作与互动剧情")}</p>
+      </article>
 
-function getMessageThreadSeed(name) {
-  return [
-    { from: "me", text: "我把新支线写到一半了，想听听你对结局A的想法。", time: "今天 12:10" },
-    { from: "other", text: "A线可以更冷一点，我刚发你一张关系图。", time: "今天 12:12" },
-    { from: "me", text: "收到，我今晚把第一幕改完再发你。", time: "今天 12:15" },
-    { from: "other", text: `${name}这边没问题，等你新稿。`, time: "今天 12:20" }
-  ];
+      <div class="user-tabs ios-card">
+        <button class="${activeTab === "works" ? "active" : ""}" data-action="user-modal-tab" data-tab="works">作品</button>
+        <button class="${activeTab === "likes" ? "active" : ""}" data-action="user-modal-tab" data-tab="likes">喜欢</button>
+        <button class="${activeTab === "favorites" ? "active" : ""}" data-action="user-modal-tab" data-tab="favorites">收藏</button>
+      </div>
+
+      <section class="user-feed-grid ${isActiveFeedEmpty ? "is-empty" : ""}">
+        ${activeFeed
+          .map((item) => {
+            const clickable = hasWorldCard(item.id);
+            return `
+              <article class="user-feed-card" ${clickable ? `data-action="open-world-detail" data-id="${item.id}"` : 'data-action="noop"'}>
+                <div class="cover"></div>
+                <h4>${escapeHtml(item.title || "未命名")}</h4>
+                <p>${escapeHtml(item.subtitle || "")}</p>
+                ${item.summary ? `<small>${escapeHtml(item.summary)}</small>` : ""}
+              </article>
+            `;
+          })
+          .join("")}
+        ${isActiveFeedEmpty ? `<div class="user-feed-empty-tip">暂无内容</div>` : ""}
+      </section>
+    </section>
+  `);
 }
 
 function ensureMessageThread(messageId) {
-  const meta = MESSAGE_INBOX.find((x) => x.id === messageId) || MESSAGE_INBOX[0] || { name: "会话" };
-  if (!messageId) return getMessageThreadSeed(meta.name);
-  if (!uiState.messageThreads[messageId]) {
-    uiState.messageThreads[messageId] = getMessageThreadSeed(meta.name);
-  }
-  return uiState.messageThreads[messageId];
+  if (!messageId) return [];
+  return Array.isArray(uiState.messageThreads[messageId]) ? uiState.messageThreads[messageId] : [];
 }
 
 function getMessageInboxItem(messageId) {
@@ -3241,6 +3482,37 @@ function nowClockText() {
   const h = String(now.getHours()).padStart(2, "0");
   const m = String(now.getMinutes()).padStart(2, "0");
   return `${h}:${m}`;
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || "").trim());
+}
+
+function normalizeUserName(value = "") {
+  return String(value || "")
+    .trim()
+    .replace(/^@+/, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
+function resolveAuthorIdByName(name = "") {
+  const needle = normalizeUserName(name);
+  if (!needle) return "";
+  const hit = Object.values(AUTHOR_DIRECTORY).find((x) => {
+    const candidateName = normalizeUserName(x?.name || "");
+    const candidateHandle = normalizeUserName(x?.handle || "");
+    return candidateName === needle || candidateHandle === needle;
+  });
+  const id = String(hit?.id || "").trim();
+  return isUuid(id) ? id : "";
+}
+
+function getActiveConversationId() {
+  const selected = String(uiState.selectedMessageId || "").trim();
+  if (isUuid(selected)) return selected;
+  const fallback = MESSAGE_INBOX.find((x) => isUuid(x.id));
+  return fallback?.id || "";
 }
 
 function moveMessageToTop(messageId) {
@@ -3266,7 +3538,7 @@ function updateMessageInboxPreview(messageId, preview) {
 
 function pushThreadMessage(messageId, text, from = "me") {
   const messages = ensureMessageThread(messageId);
-  messages.push({ from, text, time: "刚刚" });
+  messages.push({ from, text, time: "刚刚", read: from !== "me" });
   if (from === "me") {
     updateMessageInboxPreview(messageId, text);
     markMessageRead(messageId);
@@ -3280,6 +3552,96 @@ function pushThreadMessage(messageId, text, from = "me") {
   }
 }
 
+function formatThreadClock(isoTime) {
+  const dt = new Date(String(isoTime || ""));
+  if (Number.isNaN(dt.getTime())) return "刚刚";
+  const h = String(dt.getHours()).padStart(2, "0");
+  const m = String(dt.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
+}
+
+async function fetchThreadMessages(conversationId, userId, limit = 120) {
+  const query = new URLSearchParams({
+    conversationId: String(conversationId || "").trim(),
+    userId: String(userId || "").trim(),
+    limit: String(limit)
+  });
+  const data = await apiGetJson(`/messages/thread?${query.toString()}`);
+  return {
+    messages: Array.isArray(data?.messages) ? data.messages : [],
+    peer: data?.peer || null
+  };
+}
+
+function toThreadViewMessages(rows, currentUserId) {
+  return rows.map((row) => ({
+    id: String(row?.id || ""),
+    from: String(row?.sender_id || "") === String(currentUserId || "") ? "me" : "other",
+    text: String(row?.content || ""),
+    time: formatThreadClock(row?.created_at),
+    read: Boolean(row?.read_by_peer)
+  }));
+}
+
+function threadViewChanged(prev = [], next = []) {
+  if (!Array.isArray(prev) || !Array.isArray(next)) return true;
+  if (prev.length !== next.length) return true;
+  for (let i = 0; i < prev.length; i += 1) {
+    const a = prev[i] || {};
+    const b = next[i] || {};
+    if ((a.id || "") !== (b.id || "")) return true;
+    if ((a.text || "") !== (b.text || "")) return true;
+    if ((a.from || "") !== (b.from || "")) return true;
+    if ((a.time || "") !== (b.time || "")) return true;
+    if (Boolean(a.read) !== Boolean(b.read)) return true;
+  }
+  return false;
+}
+
+function formatPeerOnlineStatus(peer) {
+  if (!peer?.lastReadAt) return "离线";
+  if (peer.online) return "在线";
+  const ts = new Date(peer.lastReadAt).getTime();
+  if (!Number.isFinite(ts)) return "离线";
+  const mins = Math.max(1, Math.floor((Date.now() - ts) / 60000));
+  if (mins < 60) return `${mins} 分钟前在线`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} 小时前在线`;
+  const days = Math.floor(hours / 24);
+  return `${days} 天前在线`;
+}
+
+async function markConversationReadOnServer(conversationId) {
+  if (!uiState.currentUserId || !conversationId) return null;
+  return apiJson("/messages/read", {
+    conversationId,
+    userId: uiState.currentUserId
+  });
+}
+
+async function syncActiveConversationThread() {
+  if (!uiState.isLoggedIn || !uiState.currentUserId) return false;
+  const currentHash = window.location.hash || "";
+  if (!currentHash.startsWith("#/messages/thread")) return false;
+  const activeId = getActiveConversationId();
+  if (!activeId || !isUuid(activeId)) return false;
+  const payload = await fetchThreadMessages(activeId, uiState.currentUserId, 120);
+  const rows = payload.messages || [];
+  if (payload.peer) {
+    uiState.messagePeerPresence[activeId] = payload.peer;
+  }
+  const next = toThreadViewMessages(rows, uiState.currentUserId);
+  const prev = ensureMessageThread(activeId);
+  if (!threadViewChanged(prev, next)) return false;
+  uiState.messageThreads[activeId] = next;
+  const latest = next[next.length - 1];
+  if (latest?.text) {
+    updateMessageInboxPreview(activeId, latest.text);
+    if (latest.from === "me") markMessageRead(activeId);
+  }
+  return true;
+}
+
 function showMessageFeedback(text) {
   uiState.messageFeedback = text;
   render();
@@ -3291,17 +3653,74 @@ function showMessageFeedback(text) {
   }, 1300);
 }
 
-function ensurePrivateThreadByUser(name) {
-  let item = MESSAGE_INBOX.find((x) => x.type === "私聊" && x.name === name);
-  if (!item) {
-    const id = `m_user_${Date.now()}`;
-    item = { id, type: "私聊", name, preview: "开始聊天吧", time: nowClockText(), badge: 0 };
-    MESSAGE_INBOX.unshift(item);
-    uiState.messageThreads[id] = [
-      { from: "other", text: `你好，我是${name}。`, time: "刚刚" }
-    ];
+async function startOrReuseDirectConversation(targetUserId, targetName = "对方", options = {}) {
+  const navigate = options.navigate !== false;
+  if (!uiState.isLoggedIn || !uiState.currentUserId) {
+    uiState.showLoginModal = true;
+    render();
+    return "";
   }
-  return item;
+  const targetIdRaw = String(targetUserId || "").trim();
+  const targetId = isUuid(targetIdRaw) ? targetIdRaw : resolveAuthorIdByName(targetName);
+  if (!targetId) {
+    uiState.messageFeedback = "缺少目标用户ID，暂无法发起私聊";
+    render();
+    return "";
+  }
+  const resp = await fetch(`${API_BASE}/messages/direct/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      initiatorId: uiState.currentUserId,
+      targetUserId: targetId
+    })
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data?.conversation?.id) {
+    throw new Error(data?.message || data?.code || `DIRECT_START_HTTP_${resp.status}`);
+  }
+  const conversationId = String(data.conversation.id);
+  if (!MESSAGE_INBOX.some((x) => x.id === conversationId)) {
+    MESSAGE_INBOX.unshift({
+      id: conversationId,
+      name: String(targetName || "私聊会话").trim() || "私聊会话",
+      preview: "",
+      type: "私聊",
+      time: "刚刚",
+      badge: 0
+    });
+  }
+  if (!Array.isArray(uiState.messageThreads[conversationId])) {
+    uiState.messageThreads[conversationId] = [];
+  }
+  if (navigate) {
+    uiState.selectedMessageId = conversationId;
+    uiState.messageReadAckConversationId = "";
+    markMessageRead(conversationId);
+  }
+  uiState.messageFeedback = "";
+  if (navigate) {
+    if (window.location.hash !== "#/messages/thread") window.location.hash = "#/messages/thread";
+    else render();
+    void syncActiveConversationThread()
+      .then((changed) => {
+        if (changed) render();
+      })
+      .catch(() => {});
+  } else {
+    render();
+  }
+  void bootstrapClientDataFull(uiState.currentUserId)
+    .then(() => {
+      uiState.bootstrapFullLoaded = true;
+      render();
+    })
+    .catch(() => {});
+  return conversationId;
+}
+
+async function openOrCreateDirectThread(targetUserId, targetName = "对方") {
+  return startOrReuseDirectConversation(targetUserId, targetName, { navigate: true });
 }
 
 function advancePlayTurn(actionText) {
@@ -3504,13 +3923,14 @@ function pickPlayGuideOptions(world = getSelectedWorld(), size = 3) {
   return uniq.slice(0, size);
 }
 
-async function apiJson(path, payload, method = "POST") {
+async function apiJson(path, payload, method = "POST", fetchOptions = {}) {
   let resp;
   try {
     resp = await fetch(`${API_BASE}${path}`, {
       method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      ...fetchOptions
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error || "");
@@ -3671,6 +4091,322 @@ function syncWorldCardMetrics(worldCardId, patch = {}) {
   FEED_DATA[idx] = { ...FEED_DATA[idx], ...patch };
 }
 
+function getWorldInteractionCacheKey(userId = uiState.currentUserId || "") {
+  const uid = String(userId || "").trim();
+  return uid ? `${WORLD_INTERACTION_CACHE_PREFIX}${uid}` : "";
+}
+
+function getPendingWorldReactionKey(userId = uiState.currentUserId || "") {
+  const uid = String(userId || "").trim();
+  return uid ? `${WORLD_REACTION_PENDING_PREFIX}${uid}` : "";
+}
+
+function getFollowStateCacheKey(userId = uiState.currentUserId || "") {
+  const uid = String(userId || "").trim();
+  return uid ? `${FOLLOW_STATE_CACHE_PREFIX}${uid}` : "";
+}
+
+function getPendingFollowKey(userId = uiState.currentUserId || "") {
+  const uid = String(userId || "").trim();
+  return uid ? `${FOLLOW_PENDING_PREFIX}${uid}` : "";
+}
+
+function readFollowStateCache(userId = uiState.currentUserId || "") {
+  const key = getFollowStateCacheKey(userId);
+  if (!key) return {};
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeFollowStateCache(next = {}, userId = uiState.currentUserId || "") {
+  const key = getFollowStateCacheKey(userId);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(next && typeof next === "object" ? next : {}));
+  } catch {}
+}
+
+function persistFollowState(targetUserId, followed, userId = uiState.currentUserId || "") {
+  const uid = String(userId || "").trim();
+  const tid = String(targetUserId || "").trim();
+  if (!uid || !tid) return;
+  const map = readFollowStateCache(uid);
+  map[tid] = { followedByMe: Boolean(followed), updatedAt: Date.now() };
+  writeFollowStateCache(map, uid);
+}
+
+function overlayFollowStateForCurrentUser() {
+  const uid = String(uiState.currentUserId || "").trim();
+  if (!uid) return;
+  const map = readFollowStateCache(uid);
+  if (!map || typeof map !== "object") return;
+  Object.entries(map).forEach(([userId, value]) => {
+    const followed = Boolean(value && typeof value === "object" ? value.followedByMe : false);
+    if (AUTHOR_DIRECTORY[userId]) AUTHOR_DIRECTORY[userId].followedByMe = followed;
+  });
+}
+
+function readPendingFollowOps(userId = uiState.currentUserId || "") {
+  const key = getPendingFollowKey(userId);
+  if (!key) return {};
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePendingFollowOps(next = {}, userId = uiState.currentUserId || "") {
+  const key = getPendingFollowKey(userId);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(next && typeof next === "object" ? next : {}));
+  } catch {}
+}
+
+function queuePendingFollowOp(targetUserId, follow) {
+  const uid = String(uiState.currentUserId || "").trim();
+  const tid = String(targetUserId || "").trim();
+  if (!uid || !tid) return;
+  const bucket = readPendingFollowOps(uid);
+  bucket[tid] = { targetUserId: tid, follow: Boolean(follow), updatedAt: Date.now() };
+  writePendingFollowOps(bucket, uid);
+}
+
+function clearPendingFollowOp(targetUserId) {
+  const uid = String(uiState.currentUserId || "").trim();
+  const tid = String(targetUserId || "").trim();
+  if (!uid || !tid) return;
+  const bucket = readPendingFollowOps(uid);
+  if (!Object.prototype.hasOwnProperty.call(bucket, tid)) return;
+  delete bucket[tid];
+  writePendingFollowOps(bucket, uid);
+}
+
+function readPendingWorldReactions(userId = uiState.currentUserId || "") {
+  const key = getPendingWorldReactionKey(userId);
+  if (!key) return {};
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePendingWorldReactions(next = {}, userId = uiState.currentUserId || "") {
+  const key = getPendingWorldReactionKey(userId);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(next && typeof next === "object" ? next : {}));
+  } catch {}
+}
+
+function queuePendingWorldReaction(worldCardId, interactionType, active) {
+  const uid = String(uiState.currentUserId || "").trim();
+  if (!uid || !worldCardId) return;
+  const bucket = readPendingWorldReactions(uid);
+  const key = `${worldCardId}:${interactionType}`;
+  bucket[key] = {
+    worldCardId: String(worldCardId),
+    interactionType: interactionType === "favorite" ? "favorite" : "like",
+    active: Boolean(active),
+    updatedAt: Date.now()
+  };
+  writePendingWorldReactions(bucket, uid);
+}
+
+function clearPendingWorldReaction(worldCardId, interactionType) {
+  const uid = String(uiState.currentUserId || "").trim();
+  if (!uid || !worldCardId) return;
+  const bucket = readPendingWorldReactions(uid);
+  const key = `${worldCardId}:${interactionType}`;
+  if (!Object.prototype.hasOwnProperty.call(bucket, key)) return;
+  delete bucket[key];
+  writePendingWorldReactions(bucket, uid);
+}
+
+function readWorldInteractionCache(userId = uiState.currentUserId || "") {
+  const key = getWorldInteractionCacheKey(userId);
+  if (!key) return {};
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeWorldInteractionCache(next = {}, userId = uiState.currentUserId || "") {
+  const key = getWorldInteractionCacheKey(userId);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(next && typeof next === "object" ? next : {}));
+  } catch {}
+}
+
+function persistWorldInteractionState(worldCardId, patch = {}, userId = uiState.currentUserId || "") {
+  const uid = String(userId || "").trim();
+  if (!uid || !worldCardId) return;
+  const map = readWorldInteractionCache(uid);
+  const prev = map[worldCardId] && typeof map[worldCardId] === "object" ? map[worldCardId] : {};
+  map[worldCardId] = { ...prev, ...patch, updatedAt: Date.now() };
+  writeWorldInteractionCache(map, uid);
+}
+
+function overlayWorldInteractionsForCurrentUser() {
+  if (!uiState.currentUserId || !Array.isArray(FEED_DATA) || FEED_DATA.length === 0) return;
+  const map = readWorldInteractionCache(uiState.currentUserId);
+  if (!map || typeof map !== "object") return;
+  FEED_DATA.forEach((item, idx) => {
+    const patch = map[item?.id];
+    if (!patch || typeof patch !== "object") return;
+    FEED_DATA[idx] = {
+      ...item,
+      ...(typeof patch.liked === "boolean" ? { liked: patch.liked } : {}),
+      ...(typeof patch.favorited === "boolean" ? { favorited: patch.favorited } : {}),
+      ...(typeof patch.like === "string" ? { like: patch.like } : {}),
+      ...(typeof patch.star === "string" ? { star: patch.star } : {})
+    };
+  });
+}
+
+function patchWorldMetricsInPayload(payload, worldCardId, patch = {}) {
+  if (!payload || typeof payload !== "object") return false;
+  const feed = Array.isArray(payload.feedData) ? payload.feedData : [];
+  const idx = feed.findIndex((x) => x?.id === worldCardId);
+  if (idx < 0) return false;
+  feed[idx] = { ...feed[idx], ...patch };
+  payload.feedData = feed;
+  return true;
+}
+
+function persistWorldMetricsToCache(worldCardId, patch = {}) {
+  try {
+    const rawCore = localStorage.getItem(BOOTSTRAP_CORE_CACHE_KEY);
+    if (rawCore) {
+      const core = JSON.parse(rawCore);
+      if (patchWorldMetricsInPayload(core, worldCardId, patch)) {
+        localStorage.setItem(BOOTSTRAP_CORE_CACHE_KEY, JSON.stringify(core));
+      }
+    }
+  } catch {}
+  try {
+    const uid = String(uiState.currentUserId || "").trim();
+    if (!uid) return;
+    const fullKey = `${BOOTSTRAP_FULL_CACHE_PREFIX}${uid}`;
+    const rawFull = localStorage.getItem(fullKey);
+    if (!rawFull) return;
+    const full = JSON.parse(rawFull);
+    if (patchWorldMetricsInPayload(full, worldCardId, patch)) {
+      localStorage.setItem(fullKey, JSON.stringify(full));
+    }
+  } catch {}
+}
+
+function syncWorldCardMetricsAndCache(worldCardId, patch = {}) {
+  syncWorldCardMetrics(worldCardId, patch);
+  persistWorldMetricsToCache(worldCardId, patch);
+  persistWorldInteractionState(worldCardId, patch);
+}
+
+function syncWorldStateEverywhere(worldCardId, patch = {}) {
+  syncWorldCardMetricsAndCache(worldCardId, patch);
+}
+
+function reconcileWorldReactionsInBackground() {
+  const uid = String(uiState.currentUserId || "").trim();
+  if (!uid) return;
+  void bootstrapClientDataFull(uid)
+    .then(() => {
+      uiState.bootstrapFullLoaded = true;
+      overlayWorldInteractionsForCurrentUser();
+      render();
+    })
+    .catch(() => {});
+}
+
+let worldReactionFlushRunning = false;
+async function flushPendingWorldReactions() {
+  const uid = String(uiState.currentUserId || "").trim();
+  if (!uid || worldReactionFlushRunning) return;
+  const bucket = readPendingWorldReactions(uid);
+  const jobs = Object.values(bucket || {});
+  if (!jobs.length) return;
+  worldReactionFlushRunning = true;
+  try {
+    for (const job of jobs) {
+      const worldCardId = String(job?.worldCardId || "").trim();
+      const interactionType = String(job?.interactionType || "").trim();
+      if (!worldCardId || !["like", "favorite"].includes(interactionType)) continue;
+      const active = Boolean(job?.active);
+      try {
+        const stats = await setWorldCardReaction(worldCardId, interactionType, active);
+        if (stats) {
+          syncWorldStateEverywhere(worldCardId, {
+            liked: Boolean(stats.likedByMe),
+            favorited: Boolean(stats.favoritedByMe),
+            like: formatMetricCount(stats.likesCount),
+            star: formatMetricCount(stats.favoritesCount)
+          });
+        }
+        clearPendingWorldReaction(worldCardId, interactionType);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "";
+        if (msg && msg !== "NETWORK_UNREACHABLE") {
+          clearPendingWorldReaction(worldCardId, interactionType);
+        }
+      }
+    }
+  } finally {
+    worldReactionFlushRunning = false;
+  }
+}
+
+let followFlushRunning = false;
+async function flushPendingFollowOps() {
+  const uid = String(uiState.currentUserId || "").trim();
+  if (!uid || followFlushRunning) return;
+  const bucket = readPendingFollowOps(uid);
+  const jobs = Object.values(bucket || {});
+  if (!jobs.length) return;
+  followFlushRunning = true;
+  try {
+    for (const job of jobs) {
+      const targetUserId = String(job?.targetUserId || "").trim();
+      if (!targetUserId) continue;
+      const follow = Boolean(job?.follow);
+      try {
+        const relation = await setUserFollowRelation(targetUserId, follow, { keepalive: true });
+        const followedByMe = Boolean(relation?.followedByMe);
+        persistFollowState(targetUserId, followedByMe);
+        if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = followedByMe;
+        clearPendingFollowOp(targetUserId);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "";
+        if (msg && msg !== "NETWORK_UNREACHABLE") {
+          clearPendingFollowOp(targetUserId);
+        }
+      }
+    }
+  } finally {
+    followFlushRunning = false;
+  }
+}
+
 function buildWorldLibraryItem(world, tabType = "likes") {
   const theme = world?.theme || "主题";
   if (tabType === "favorites") {
@@ -3713,8 +4449,18 @@ async function setWorldCardReaction(worldCardId, reactionType, active) {
     userId: uiState.currentUserId,
     interactionType: reactionType,
     active
-  });
+  }, "POST", { keepalive: true });
   return data?.stats || null;
+}
+
+async function setUserFollowRelation(followingUserId, active, fetchOptions = {}) {
+  if (!uiState.currentUserId) throw new Error("USER_NOT_READY");
+  const data = await apiJson("/auth/follow", {
+    followerId: uiState.currentUserId,
+    followingUserId,
+    follow: Boolean(active)
+  }, "POST", fetchOptions);
+  return data?.relation || null;
 }
 
 async function setDynamicReaction(postId, reactionType, active) {
@@ -3741,6 +4487,115 @@ async function createDynamicCommentAndSync(postId, text) {
     content: text
   });
   return data?.comment || null;
+}
+
+function formatWorldCommentTime(dateLike) {
+  const d = new Date(String(dateLike || ""));
+  if (Number.isNaN(d.getTime())) return "刚刚";
+  const delta = Math.max(0, Date.now() - d.getTime());
+  const mins = Math.floor(delta / 60000);
+  if (mins < 1) return "刚刚";
+  if (mins < 60) return `${mins}分钟前`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}天前`;
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${mm}-${dd}`;
+}
+
+function getWorldCommentState(worldCardId, fallbackCount = 0) {
+  const id = String(worldCardId || "").trim();
+  if (!id) return null;
+  if (!uiState.worldCommentsState[id]) {
+    uiState.worldCommentsState[id] = {
+      loaded: false,
+      loading: false,
+      submitting: false,
+      error: "",
+      comments: [],
+      commentsCount: Number(fallbackCount || 0),
+      likingByCommentId: {}
+    };
+  } else if (!Number.isFinite(Number(uiState.worldCommentsState[id].commentsCount || 0))) {
+    uiState.worldCommentsState[id].commentsCount = Number(fallbackCount || 0);
+  }
+  return uiState.worldCommentsState[id];
+}
+
+function getWorldCommentDraft(worldCardId) {
+  const id = String(worldCardId || "").trim();
+  if (!id) return "";
+  return String(uiState.worldCommentDraftByCard[id] || "");
+}
+
+function setWorldCommentDraft(worldCardId, text) {
+  const id = String(worldCardId || "").trim();
+  if (!id) return;
+  uiState.worldCommentDraftByCard[id] = String(text || "");
+}
+
+async function loadWorldCardComments(worldCardId) {
+  const uid = String(uiState.currentUserId || "").trim();
+  const query = new URLSearchParams({
+    worldCardId: String(worldCardId || ""),
+    limit: "120"
+  });
+  if (uid) query.set("userId", uid);
+  const data = await apiGetJson(`/worldcards/comments?${query.toString()}`);
+  return {
+    comments: Array.isArray(data?.comments) ? data.comments : [],
+    commentsCount: Number(data?.commentsCount || 0)
+  };
+}
+
+async function createWorldCardCommentAndSync(worldCardId, text) {
+  if (!uiState.currentUserId) throw new Error("USER_NOT_READY");
+  const data = await apiJson("/worldcards/comments", {
+    worldCardId,
+    userId: uiState.currentUserId,
+    content: text
+  });
+  return {
+    comment: data?.comment || null,
+    commentsCount: Number(data?.commentsCount || 0)
+  };
+}
+
+async function setWorldCardCommentLike(worldCommentId, active) {
+  if (!uiState.currentUserId) throw new Error("USER_NOT_READY");
+  const data = await apiJson("/worldcards/comments/like", {
+    commentId: worldCommentId,
+    userId: uiState.currentUserId,
+    active
+  });
+  return data?.comment || null;
+}
+
+function ensureWorldCardCommentsLoaded(world) {
+  const worldId = String(world?.id || "").trim();
+  if (!worldId) return;
+  const fallbackCount = toMetricCount(world?.comment);
+  const state = getWorldCommentState(worldId, fallbackCount);
+  if (!state || state.loaded || state.loading) return;
+  state.loading = true;
+  state.error = "";
+  void loadWorldCardComments(worldId)
+    .then(({ comments, commentsCount }) => {
+      state.comments = comments;
+      state.commentsCount = Number.isFinite(commentsCount) && commentsCount >= 0 ? commentsCount : comments.length;
+      state.loaded = true;
+      state.loading = false;
+      syncWorldStateEverywhere(worldId, { comment: formatMetricCount(state.commentsCount) });
+      render();
+    })
+    .catch((err) => {
+      state.loading = false;
+      state.loaded = true;
+      state.error = err instanceof Error ? err.message : "加载失败";
+      render();
+    });
 }
 
 function ensureDynamicCommentsLoaded(item) {
@@ -3800,14 +4655,7 @@ async function loginWithAccountAndSync() {
       throw new Error(data?.message || data?.code || `HTTP_${resp.status}`);
     }
 
-    const boot = await fetch(`${API_BASE}/bootstrap?mode=full&userId=${encodeURIComponent(data.user.id)}`);
-    if (!boot.ok) throw new Error(`BOOTSTRAP_${boot.status}`);
-    const payload = await boot.json();
-    applyBootstrapData(payload, "full");
-    uiState.bootstrapFullLoaded = true;
-    try {
-      localStorage.setItem(`${BOOTSTRAP_FULL_CACHE_PREFIX}${data.user.id}`, JSON.stringify(payload));
-    } catch {}
+    await syncUserAfterAuth(data.user.id);
 
     uiState.showLoginModal = false;
     uiState.loginPassword = "";
@@ -3818,6 +4666,70 @@ async function loginWithAccountAndSync() {
     uiState.loginLoading = false;
     render();
   }
+}
+
+async function registerWithAccountAndSync() {
+  const account = String(uiState.registerAccount || "").trim();
+  const password = String(uiState.registerPassword || "");
+  const confirmPassword = String(uiState.registerConfirmPassword || "");
+
+  if (!account || !password || !confirmPassword) {
+    uiState.loginError = "请填写账号、密码和确认密码";
+    render();
+    return;
+  }
+  if (password.length < 6) {
+    uiState.loginError = "密码至少 6 位";
+    render();
+    return;
+  }
+  if (password !== confirmPassword) {
+    uiState.loginError = "两次输入的密码不一致";
+    render();
+    return;
+  }
+
+  uiState.loginLoading = true;
+  uiState.loginError = "";
+  render();
+
+  try {
+    const resp = await fetch(`${API_BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account, password, confirmPassword })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data?.user?.id) {
+      throw new Error(data?.message || data?.code || `HTTP_${resp.status}`);
+    }
+
+    await syncUserAfterAuth(data.user.id);
+
+    uiState.showLoginModal = false;
+    uiState.accountAuthMode = "login";
+    uiState.registerAccount = "";
+    uiState.registerPassword = "";
+    uiState.registerConfirmPassword = "";
+    uiState.loginPassword = "";
+    uiState.loginError = "";
+  } catch (err) {
+    uiState.loginError = err instanceof Error ? err.message : "注册失败，请稍后重试";
+  } finally {
+    uiState.loginLoading = false;
+    render();
+  }
+}
+
+async function syncUserAfterAuth(userId) {
+  const boot = await fetch(`${API_BASE}/bootstrap?mode=full&userId=${encodeURIComponent(userId)}`);
+  if (!boot.ok) throw new Error(`BOOTSTRAP_${boot.status}`);
+  const payload = await boot.json();
+  applyBootstrapData(payload, "full");
+  uiState.bootstrapFullLoaded = true;
+  try {
+    localStorage.setItem(`${BOOTSTRAP_FULL_CACHE_PREFIX}${userId}`, JSON.stringify(payload));
+  } catch {}
 }
 
 async function ensurePlaySession() {
@@ -4032,9 +4944,11 @@ function pageDirectMessage() {
   if (!uiState.isLoggedIn) {
     return renderMessageGuestState("登录后查看私信", "查看聊天记录、已读状态和快捷回复。");
   }
-  const activeId = uiState.selectedMessageId || MESSAGE_INBOX[0]?.id || "";
-  const chatMeta = MESSAGE_INBOX.find((x) => x.id === activeId) || MESSAGE_INBOX[0] || { id: "", name: "会话", preview: "", type: "私聊", time: "刚刚", badge: 0 };
+  const activeId = getActiveConversationId();
+  const chatMeta = MESSAGE_INBOX.find((x) => x.id === activeId) || { id: "", name: "请选择会话", preview: "", type: "私聊", time: "刚刚", badge: 0 };
   const messages = ensureMessageThread(activeId);
+  const peerPresence = uiState.messagePeerPresence[activeId] || null;
+  const onlineStatusText = formatPeerOnlineStatus(peerPresence);
   const myAvatarText = (uiState.profile?.name || "我").trim().slice(0, 1) || "我";
   return renderExploreShell(`
     <section class="dm-modern-page">
@@ -4045,11 +4959,11 @@ function pageDirectMessage() {
             <div class="dm-avatar user-avatar-click">${chatMeta.name.slice(0, 1)}</div>
             <div>
               <h3>${chatMeta.name}</h3>
-              <p>在线</p>
+              <p>${chatMeta.type === "私聊" ? onlineStatusText : chatMeta.type}</p>
             </div>
           </div>
           <div class="dm-head-actions">
-            <button class="world-link-btn" data-action="toggle-message-thread-menu">···</button>
+            <button class="dm-more-btn" data-action="toggle-message-thread-menu">◫</button>
             ${
               uiState.messageThreadMenuOpen
                 ? `
@@ -4064,28 +4978,35 @@ function pageDirectMessage() {
             }
           </div>
         </div>
-        <div class="dm-modern-messages">
+        <div class="dm-modern-messages dm-modern-messages-dark">
           ${messages
             .map(
               (m, idx) => `
             ${
               idx === 0 || messages[idx - 1].time !== m.time
-                ? `<div class="dm-time-sep">${m.time || ""}</div>`
+                ? `<div class="dm-time-sep dm-time-sep-dark">${m.time || ""}</div>`
                 : ""
             }
             <div class="dm-modern-row ${m.from === "me" ? "right" : "left"}">
               ${m.from === "other" ? `<span class="dm-modern-avatar user-avatar-click">${chatMeta.name.slice(0, 1)}</span>` : ""}
-              <div class="dm-modern-bubble">${m.text}</div>
+              <div class="dm-modern-bubble-wrap">
+                <div class="dm-modern-bubble">${m.text}</div>
+                ${
+                  m.from === "me" && !messages.slice(idx + 1).some((x) => x.from === "me")
+                    ? `<div class="dm-read-flag">${m.read ? "已读" : "送达"}</div>`
+                    : ""
+                }
+              </div>
               ${m.from === "me" ? `<button class="dm-modern-avatar self dm-self-avatar-btn" data-action="open-self-profile">${escapeHtml(myAvatarText)}</button>` : ""}
             </div>
           `
             )
             .join("")}
         </div>
-        <div class="dm-modern-input-wrap">
+        <div class="dm-modern-input-wrap dm-modern-input-wrap-dark">
           <button class="dm-plus-btn" data-action="toggle-message-thread-tools">＋</button>
           <input data-field="message-thread-draft" value="${escapeHtml(uiState.messageThreadDraft)}" placeholder="发消息..." />
-          <button class="dm-send-btn" data-action="message-thread-send">发送</button>
+          <button class="dm-send-btn dm-send-btn-dark" data-action="message-thread-send">发送</button>
         </div>
         ${uiState.messageFeedback ? `<div class="msg-action-feedback">${uiState.messageFeedback}</div>` : ""}
         ${
@@ -4245,7 +5166,7 @@ function pagePlayCore() {
       }
     </section>
     ${uiState.showLoginModal ? renderExploreLoginModal() : ""}
-    ${uiState.showUserModal ? renderUserProfileModal() : ""}
+    ${uiState.showProfileEditModal ? renderProfileEditModal() : ""}
   `;
 }
 
@@ -4498,6 +5419,14 @@ async function parseWorkshopCustomTextToDraft() {
   }
   uiState.workshopCustomParsing = true;
   render();
+  if (authUserId) {
+    void flushPendingWorldReactions()
+      .then(() => {
+        overlayWorldInteractionsForCurrentUser();
+        render();
+      })
+      .catch(() => {});
+  }
   try {
     const data = await apiJson("/creator/cards/parse", {
       mode: uiState.workshopMode,
@@ -4793,6 +5722,55 @@ function renderWorkshopPublishFlow() {
   `;
 }
 
+function pageWorkshopEntry() {
+  const cards = [
+    {
+      icon: "🌍",
+      title: "世界卡",
+      desc: "搭建可持续连载的世界底盘，定义主目标、冲突与固定角色。",
+      intro: "适合中长线创作，支持资源系统与规则约束，玩法更具策略深度。",
+      go: "#/workshop/world/editor"
+    },
+    {
+      icon: "📖",
+      title: "故事卡",
+      desc: "快速定义短篇叙事结构，围绕开场锚点和结局锚点推进体验。",
+      intro: "适合单次体验与活动剧情，强调节奏控制与分支转折。",
+      go: "#/workshop/story/editor"
+    },
+    {
+      icon: "🎭",
+      title: "角色卡",
+      desc: "塑造高辨识度互动角色，配置语气风格、边界与成长里程碑。",
+      intro: "适合角色向玩法，聚焦关系推进、情绪互动与长期记忆。",
+      go: "#/workshop/character/editor"
+    }
+  ];
+  return renderExploreShell(`
+    <section class="workshop-entry-page">
+      <h3>创作卡类型</h3>
+      <div class="workshop-entry-list">
+        ${cards
+          .map(
+            (item) => `
+          <article class="workshop-entry-card" data-go="${item.go}">
+            <div class="workshop-entry-left">
+              <span class="workshop-entry-icon">${item.icon}</span>
+              <strong>${item.title}</strong>
+            </div>
+            <div class="workshop-entry-right">
+              <p>${item.desc}</p>
+              <small>${item.intro}</small>
+            </div>
+          </article>
+        `
+          )
+          .join("")}
+      </div>
+    </section>
+  `);
+}
+
 function pageWorkshop() {
   if (uiState.isLoggedIn && uiState.currentUserId && uiState.workshopCardsLoadedForUser !== uiState.currentUserId) {
     void syncWorkshopCardsFromApi({ silent: true });
@@ -4800,113 +5778,118 @@ function pageWorkshop() {
   const mode = uiState.workshopMode;
   const meta = WORKSHOP_MODE_META[mode];
   const authoringMode = getWorkshopEffectiveAuthoringMode(mode);
-  const forceCustom = WORKSHOP_FORCE_CUSTOM_MODES.has(mode);
-  const templateList = WORKSHOP_TEMPLATES[mode] || [];
-  const selectedTemplate = uiState.workshopSelectedTemplateId[mode] || templateList[0]?.id || "";
   const draft = normalizeWorkshopDraftForMode(mode, getWorkshopDraftByMode(mode));
   const creatorWorks = buildCreatorWorks();
   const parseMeta = uiState.workshopCustomParsed || null;
+  const workshopFieldExamples = {
+    "workshop-world-openingLine": "例如：暴雨夜，旧站台广播突然点名你的代号。",
+    "workshop-world-worldSetting": "例如：近未来港城，财团与灰产长期共治。",
+    "workshop-world-playerIdentity": "例如：你是游走灰区的中间人，熟悉街头与体制缝隙。",
+    "workshop-world-primaryGoal": "例如：180天内拿到进入上层议会的资格。",
+    "workshop-world-coreConflict": "例如：黑账索引在你手里，但每次公开都要支付关系代价。",
+    "workshop-world-fixedNpcs": "例如：审计官林序；安保队长段铮；线人白雀。",
+    "workshop-world-resourceSystem": "例如：信用点、关系债、可验证证据。",
+    "workshop-world-toneStyle": "例如：冷峻、压迫、博弈感强。",
+    "workshop-world-forbiddenRules": "例如：禁止无代价获得核心情报。",
+    "workshop-world-detailMemorySeed": "例如：N-17站台、断续女声、倾斜告示牌。",
+    "workshop-story-openingAnchor": "例如：你在婚礼前夜收到匿名录像。",
+    "workshop-story-endingAnchors": "例如：真相公开/沉默离场/同盟反噬。",
+    "workshop-story-fixedNpcs": "例如：主角青梅、公司合伙人、匿名爆料者。",
+    "workshop-story-scopeLimits": "例如：24小时内，仅城市核心区可行动。",
+    "workshop-story-primaryGoal": "例如：在天亮前锁定幕后操盘人。",
+    "workshop-story-coreConflict": "例如：救人会丢证据，追证据会牺牲关系。",
+    "workshop-story-branchSeeds": "例如：医院监控、遗失U盘、错发短信。",
+    "workshop-story-pacingHint": "例如：前紧后爆，第三幕反转。",
+    "workshop-story-cluePool": "例如：门禁记录、通话清单、资金流水。",
+    "workshop-character-personaName": "例如：叶言青",
+    "workshop-character-relationStart": "例如：你们是互相利用但默契很高的搭档。",
+    "workshop-character-personaCore": "例如：克制、敏锐、极度重承诺。",
+    "workshop-character-dialogueStyle": "例如：短句、反问、偶尔冷幽默。",
+    "workshop-character-relationBoundary": "例如：不谈家庭，不接受公开羞辱。",
+    "workshop-character-taboos": "例如：背叛、失约、拿过去威胁她。",
+    "workshop-character-openingLine": "例如：‘你终于来了，比我预计晚了七分钟。’",
+    "workshop-character-memoryHooks": "例如：总会记住你说过的小细节并回收利用。",
+    "workshop-character-triggerWords": "例如：真相、交易、代价。",
+    "workshop-character-growthMilestones": "例如：从试探合作到公开站队。"
+  };
   const renderModeFields = () => {
     if (mode === "long_narrative") {
       return `
         <div class="workshop-form-grid">
-          <label>开场句（必填）<textarea data-field="workshop-world-openingLine">${escapeHtml(draft.openingLine || "")}</textarea></label>
-          <label>世界底盘（必填）<textarea data-field="workshop-world-worldSetting">${escapeHtml(draft.worldSetting || "")}</textarea></label>
-          <label>玩家身份（必填）<textarea data-field="workshop-world-playerIdentity">${escapeHtml(draft.playerIdentity || "")}</textarea></label>
-          <label>主目标（必填）<textarea data-field="workshop-world-primaryGoal">${escapeHtml(draft.primaryGoal || "")}</textarea></label>
-          <label>核心冲突（必填）<textarea data-field="workshop-world-coreConflict">${escapeHtml(draft.coreConflict || "")}</textarea></label>
-          <label>固定角色（必填）<textarea data-field="workshop-world-fixedNpcs">${escapeHtml(draft.fixedNpcs || "")}</textarea></label>
-          <label>资源系统<input data-field="workshop-world-resourceSystem" value="${escapeHtml(draft.resourceSystem || "")}" /></label>
-          <label>文风基调<input data-field="workshop-world-toneStyle" value="${escapeHtml(draft.toneStyle || "")}" /></label>
-          <label>禁行规则<textarea data-field="workshop-world-forbiddenRules">${escapeHtml(draft.forbiddenRules || "")}</textarea></label>
-          <label>细节记忆种子<textarea data-field="workshop-world-detailMemorySeed">${escapeHtml(draft.detailMemorySeed || "")}</textarea></label>
+          <label>开场句（必填）<textarea data-field="workshop-world-openingLine" placeholder="${escapeHtml(workshopFieldExamples["workshop-world-openingLine"])}">${escapeHtml(draft.openingLine || "")}</textarea></label>
+          <label>世界底盘（必填）<textarea data-field="workshop-world-worldSetting" placeholder="${escapeHtml(workshopFieldExamples["workshop-world-worldSetting"])}">${escapeHtml(draft.worldSetting || "")}</textarea></label>
+          <label>玩家身份（必填）<textarea data-field="workshop-world-playerIdentity" placeholder="${escapeHtml(workshopFieldExamples["workshop-world-playerIdentity"])}">${escapeHtml(draft.playerIdentity || "")}</textarea></label>
+          <label>主目标（必填）<textarea data-field="workshop-world-primaryGoal" placeholder="${escapeHtml(workshopFieldExamples["workshop-world-primaryGoal"])}">${escapeHtml(draft.primaryGoal || "")}</textarea></label>
+          <label>核心冲突（必填）<textarea data-field="workshop-world-coreConflict" placeholder="${escapeHtml(workshopFieldExamples["workshop-world-coreConflict"])}">${escapeHtml(draft.coreConflict || "")}</textarea></label>
+          <label>固定角色（必填）<textarea data-field="workshop-world-fixedNpcs" placeholder="${escapeHtml(workshopFieldExamples["workshop-world-fixedNpcs"])}">${escapeHtml(draft.fixedNpcs || "")}</textarea></label>
+          <label>资源系统<input data-field="workshop-world-resourceSystem" value="${escapeHtml(draft.resourceSystem || "")}" placeholder="${escapeHtml(workshopFieldExamples["workshop-world-resourceSystem"])}" /></label>
+          <label>文风基调<input data-field="workshop-world-toneStyle" value="${escapeHtml(draft.toneStyle || "")}" placeholder="${escapeHtml(workshopFieldExamples["workshop-world-toneStyle"])}" /></label>
+          <label>禁行规则<textarea data-field="workshop-world-forbiddenRules" placeholder="${escapeHtml(workshopFieldExamples["workshop-world-forbiddenRules"])}">${escapeHtml(draft.forbiddenRules || "")}</textarea></label>
+          <label>细节记忆种子<textarea data-field="workshop-world-detailMemorySeed" placeholder="${escapeHtml(workshopFieldExamples["workshop-world-detailMemorySeed"])}">${escapeHtml(draft.detailMemorySeed || "")}</textarea></label>
         </div>
       `;
     }
     if (mode === "short_narrative") {
       return `
         <div class="workshop-form-grid">
-          <label>开场锚点（必填）<textarea data-field="workshop-story-openingAnchor">${escapeHtml(draft.openingAnchor || "")}</textarea></label>
-          <label>结局锚点（必填）<textarea data-field="workshop-story-endingAnchors">${escapeHtml(draft.endingAnchors || "")}</textarea></label>
-          <label>固定 NPC（必填）<textarea data-field="workshop-story-fixedNpcs">${escapeHtml(draft.fixedNpcs || "")}</textarea></label>
-          <label>活动范围（必填）<textarea data-field="workshop-story-scopeLimits">${escapeHtml(draft.scopeLimits || "")}</textarea></label>
-          <label>主目标（必填）<textarea data-field="workshop-story-primaryGoal">${escapeHtml(draft.primaryGoal || "")}</textarea></label>
-          <label>核心冲突（必填）<textarea data-field="workshop-story-coreConflict">${escapeHtml(draft.coreConflict || "")}</textarea></label>
-          <label>分支种子<input data-field="workshop-story-branchSeeds" value="${escapeHtml(draft.branchSeeds || "")}" /></label>
-          <label>节奏提示<input data-field="workshop-story-pacingHint" value="${escapeHtml(draft.pacingHint || "")}" /></label>
-          <label>线索池<textarea data-field="workshop-story-cluePool">${escapeHtml(draft.cluePool || "")}</textarea></label>
+          <label>开场锚点（必填）<textarea data-field="workshop-story-openingAnchor" placeholder="${escapeHtml(workshopFieldExamples["workshop-story-openingAnchor"])}">${escapeHtml(draft.openingAnchor || "")}</textarea></label>
+          <label>结局锚点（必填）<textarea data-field="workshop-story-endingAnchors" placeholder="${escapeHtml(workshopFieldExamples["workshop-story-endingAnchors"])}">${escapeHtml(draft.endingAnchors || "")}</textarea></label>
+          <label>固定 NPC（必填）<textarea data-field="workshop-story-fixedNpcs" placeholder="${escapeHtml(workshopFieldExamples["workshop-story-fixedNpcs"])}">${escapeHtml(draft.fixedNpcs || "")}</textarea></label>
+          <label>活动范围（必填）<textarea data-field="workshop-story-scopeLimits" placeholder="${escapeHtml(workshopFieldExamples["workshop-story-scopeLimits"])}">${escapeHtml(draft.scopeLimits || "")}</textarea></label>
+          <label>主目标（必填）<textarea data-field="workshop-story-primaryGoal" placeholder="${escapeHtml(workshopFieldExamples["workshop-story-primaryGoal"])}">${escapeHtml(draft.primaryGoal || "")}</textarea></label>
+          <label>核心冲突（必填）<textarea data-field="workshop-story-coreConflict" placeholder="${escapeHtml(workshopFieldExamples["workshop-story-coreConflict"])}">${escapeHtml(draft.coreConflict || "")}</textarea></label>
+          <label>分支种子<input data-field="workshop-story-branchSeeds" value="${escapeHtml(draft.branchSeeds || "")}" placeholder="${escapeHtml(workshopFieldExamples["workshop-story-branchSeeds"])}" /></label>
+          <label>节奏提示<input data-field="workshop-story-pacingHint" value="${escapeHtml(draft.pacingHint || "")}" placeholder="${escapeHtml(workshopFieldExamples["workshop-story-pacingHint"])}" /></label>
+          <label>线索池<textarea data-field="workshop-story-cluePool" placeholder="${escapeHtml(workshopFieldExamples["workshop-story-cluePool"])}">${escapeHtml(draft.cluePool || "")}</textarea></label>
         </div>
       `;
     }
     return `
       <div class="workshop-form-grid">
-        <label>人物名称（必填）<input data-field="workshop-character-personaName" value="${escapeHtml(draft.personaName || "")}" /></label>
-        <label>关系起点（必填）<textarea data-field="workshop-character-relationStart">${escapeHtml(draft.relationStart || "")}</textarea></label>
-        <label>核心性格（必填）<textarea data-field="workshop-character-personaCore">${escapeHtml(draft.personaCore || "")}</textarea></label>
-        <label>说话风格（必填）<textarea data-field="workshop-character-dialogueStyle">${escapeHtml(draft.dialogueStyle || "")}</textarea></label>
-        <label>关系边界（必填）<textarea data-field="workshop-character-relationBoundary">${escapeHtml(draft.relationBoundary || "")}</textarea></label>
-        <label>禁忌点（必填）<textarea data-field="workshop-character-taboos">${escapeHtml(draft.taboos || "")}</textarea></label>
-        <label>开场镜头句（必填）<textarea data-field="workshop-character-openingLine">${escapeHtml(draft.openingLine || "")}</textarea></label>
-        <label>记忆钩子（必填）<textarea data-field="workshop-character-memoryHooks">${escapeHtml(draft.memoryHooks || "")}</textarea></label>
-        <label>触发词<input data-field="workshop-character-triggerWords" value="${escapeHtml(draft.triggerWords || "")}" /></label>
-        <label>成长里程碑<textarea data-field="workshop-character-growthMilestones">${escapeHtml(draft.growthMilestones || "")}</textarea></label>
+        <label>人物名称（必填）<input data-field="workshop-character-personaName" value="${escapeHtml(draft.personaName || "")}" placeholder="${escapeHtml(workshopFieldExamples["workshop-character-personaName"])}" /></label>
+        <label>关系起点（必填）<textarea data-field="workshop-character-relationStart" placeholder="${escapeHtml(workshopFieldExamples["workshop-character-relationStart"])}">${escapeHtml(draft.relationStart || "")}</textarea></label>
+        <label>核心性格（必填）<textarea data-field="workshop-character-personaCore" placeholder="${escapeHtml(workshopFieldExamples["workshop-character-personaCore"])}">${escapeHtml(draft.personaCore || "")}</textarea></label>
+        <label>说话风格（必填）<textarea data-field="workshop-character-dialogueStyle" placeholder="${escapeHtml(workshopFieldExamples["workshop-character-dialogueStyle"])}">${escapeHtml(draft.dialogueStyle || "")}</textarea></label>
+        <label>关系边界（必填）<textarea data-field="workshop-character-relationBoundary" placeholder="${escapeHtml(workshopFieldExamples["workshop-character-relationBoundary"])}">${escapeHtml(draft.relationBoundary || "")}</textarea></label>
+        <label>禁忌点（必填）<textarea data-field="workshop-character-taboos" placeholder="${escapeHtml(workshopFieldExamples["workshop-character-taboos"])}">${escapeHtml(draft.taboos || "")}</textarea></label>
+        <label>开场镜头句（必填）<textarea data-field="workshop-character-openingLine" placeholder="${escapeHtml(workshopFieldExamples["workshop-character-openingLine"])}">${escapeHtml(draft.openingLine || "")}</textarea></label>
+        <label>记忆钩子（必填）<textarea data-field="workshop-character-memoryHooks" placeholder="${escapeHtml(workshopFieldExamples["workshop-character-memoryHooks"])}">${escapeHtml(draft.memoryHooks || "")}</textarea></label>
+        <label>触发词<input data-field="workshop-character-triggerWords" value="${escapeHtml(draft.triggerWords || "")}" placeholder="${escapeHtml(workshopFieldExamples["workshop-character-triggerWords"])}" /></label>
+        <label>成长里程碑<textarea data-field="workshop-character-growthMilestones" placeholder="${escapeHtml(workshopFieldExamples["workshop-character-growthMilestones"])}">${escapeHtml(draft.growthMilestones || "")}</textarea></label>
       </div>
     `;
   };
   return renderExploreShell(`
-    <section class="workshop-studio">
-      <header class="workshop-hero">
-        <div class="workshop-hero-left">
-          <h2>创作中心</h2>
-          <p>${meta.subtitle}</p>
-          <div class="workshop-mode-tabs">
-            ${Object.entries(WORKSHOP_MODE_META)
-              .map(
-                ([key, item]) => `
-              <button class="${mode === key ? "active" : ""}" data-action="workshop-set-mode" data-mode="${key}">
-                <small>${item.kicker}</small>
-                <strong>${item.label}</strong>
-              </button>
-            `
-              )
-              .join("")}
-          </div>
-        </div>
+    <section class="workshop-studio workshop-editor-page">
+      <header class="workshop-editor-head">
+        <h2>${meta.title}</h2>
       </header>
 
       <div class="workshop-body">
         <article class="workshop-panel editor">
           <div class="workshop-panel-head">
-            <h3>模式编辑器</h3>
-            ${
-              forceCustom
-                ? `<p class="workshop-feedback">当前模式支持自由创建，不再限制模板。</p>`
-                : `
-              <div class="workshop-input-tabs">
-                ${Object.entries(WORKSHOP_AUTHORING_MODE_META)
-                  .map(([key, item]) => `
-                    <button class="${authoringMode === key ? "active" : ""}" data-action="workshop-set-authoring-mode" data-authoring-mode="${key}">
+            <div class="workshop-input-tabs">
+              ${Object.entries(WORKSHOP_AUTHORING_MODE_META)
+                .map(([key, item]) => `
+                  <button
+                    class="workshop-authoring-card ${authoringMode === key ? "active" : ""}"
+                    data-action="workshop-set-authoring-mode"
+                    data-authoring-mode="${key}"
+                  >
+                    <span class="workshop-authoring-icon">${item.icon || "•"}</span>
+                    <span class="workshop-authoring-copy">
                       <strong>${item.label}</strong>
                       <small>${item.desc}</small>
-                    </button>
-                  `).join("")}
-              </div>
-            `
-            }
+                    </span>
+                  </button>
+                `).join("")}
+            </div>
             ${
-              authoringMode === "template"
+              authoringMode === "custom"
                 ? `
-              <div class="workshop-template-row">
-                <select data-field="workshop-template-id">
-                  ${templateList.map((tpl) => `<option value="${tpl.id}" ${tpl.id === selectedTemplate ? "selected" : ""}>${tpl.name}</option>`).join("")}
-                </select>
-                <button data-action="workshop-apply-template">套用模板</button>
-              </div>
-            `
-                : `
               <div class="workshop-custom-panel">
-                <label>自定义设定输入
-                  <textarea data-field="workshop-custom-raw" placeholder="输入世界观、剧情或人物设定，系统会自动拆分为结构字段。">${escapeHtml(uiState.workshopCustomRaw || "")}</textarea>
+                <label>自定义输入
+                  <textarea data-field="workshop-custom-raw" placeholder="例如：近未来港城，三大势力共治。玩家是情报中间人，需要在180天内拿到议会资格。核心冲突是公开真相会失去同盟。">${escapeHtml(uiState.workshopCustomRaw || "")}</textarea>
                 </label>
                 <div class="workshop-custom-actions">
                   <button data-action="workshop-parse-custom" class="primary">${uiState.workshopCustomParsing ? "拆分中..." : "AI 拆分字段"}</button>
@@ -4924,10 +5907,11 @@ function pageWorkshop() {
                 }
               </div>
             `
+                : ""
             }
           </div>
 
-          ${renderModeFields()}
+          ${authoringMode === "template" ? renderModeFields() : ""}
 
           <div class="workshop-action-row">
             <button class="primary" data-action="workshop-save-card">${uiState.workshopSaving ? "保存中..." : "保存卡片"}</button>
@@ -4956,6 +5940,24 @@ function pageWorkshop() {
     </section>
     ${renderWorkshopPublishFlow()}
   `);
+}
+
+function pageWorkshopWorldEditor() {
+  uiState.workshopMode = "long_narrative";
+  uiState.workshopAuthoringMode = getWorkshopEffectiveAuthoringMode("long_narrative");
+  return pageWorkshop();
+}
+
+function pageWorkshopStoryEditor() {
+  uiState.workshopMode = "short_narrative";
+  uiState.workshopAuthoringMode = getWorkshopEffectiveAuthoringMode("short_narrative");
+  return pageWorkshop();
+}
+
+function pageWorkshopCharacterEditor() {
+  uiState.workshopMode = "virtual_character";
+  uiState.workshopAuthoringMode = getWorkshopEffectiveAuthoringMode("virtual_character");
+  return pageWorkshop();
 }
 
 function renderCommunityHero(activeTab = "home") {
@@ -5063,7 +6065,14 @@ function pageCommunitySearch() {
 
   return renderExploreShell(`
     <section class="search-result-page">
-      <div class="search-result-top"><h3>搜索结果</h3><p>找到 ${ranked.length} 个相关社群</p></div>
+      <div class="search-mobile-global">
+        <div class="search-mobile-global-field xh-search" data-action="open-search-panel">
+          <input class="xh-mobile-search-input search-mobile-global-input" value="${escapeHtml(q)}" placeholder="搜索世界/主题/设定/作者" />
+          <button class="xh-search-submit" data-action="submit-search">搜索</button>
+        </div>
+        <button class="search-mobile-global-close" data-action="cancel-search-results" aria-label="返回">×</button>
+      </div>
+
       <div class="search-result-tabs">
         ${tabs.map((t) => `<button class="${t === activeTab ? "active" : ""}" data-action="set-community-search-tab" data-tab="${t}">${t}</button>`).join("")}
       </div>
@@ -5702,12 +6711,6 @@ function pageBackstageStories() {
 function pageBackstagePublish() {
   return renderExploreShell(`
     <section class="backstage-publish-page">
-      <header class="backstage-publish-head">
-        <button class="me-inline-back unified-back-btn" data-action="go-back" aria-label="返回">←</button>
-        <h2>发布动态</h2>
-        <button class="dynamic-publish-btn" data-action="publish-dynamic" ${uiState.dynamicPublishing ? "disabled" : ""}>${uiState.dynamicPublishing ? "发布中..." : "发布"}</button>
-      </header>
-
       <article class="backstage-publish-card">
         <textarea class="backstage-publish-input" data-field="dynamic-text" placeholder="分享新鲜事...">${escapeHtml(uiState.dynamicDraftText)}</textarea>
         <div class="backstage-publish-upload">照片/视频</div>
@@ -5737,11 +6740,6 @@ function pageBackstageSettings() {
   const backgroundValue = uiState.backstageTopBackgroundDraft || uiState.backstageTopBackground || "";
   return renderExploreShell(`
     <section class="backstage-setting-page">
-      <header class="backstage-setting-head">
-        <button class="me-inline-back unified-back-btn" data-action="go-back" aria-label="返回">←</button>
-        <h2>幕后主页设置</h2>
-        <button class="dynamic-publish-btn" data-action="save-backstage-settings">保存</button>
-      </header>
       <article class="backstage-setting-card">
         <label>主页签名</label>
         <textarea data-field="backstage-signature" placeholder="输入幕布主页签名">${escapeHtml(signatureValue)}</textarea>
@@ -5820,7 +6818,7 @@ function pageMessageCenter() {
           .map(
             (item, idx) => `
           <article class="msg-item" data-action="open-message-thread" data-id="${item.id}">
-            <div class="avatar user-avatar-click">${idx % 2 === 0 ? "群" : item.name.slice(0, 1)}</div>
+            <div class="avatar user-avatar-click">${getAvatarText(item.name)}</div>
             <div class="copy">
               <h4>${item.name}</h4>
               <p>${item.preview}</p>
@@ -5858,7 +6856,7 @@ function pageMessageLikes() {
             <div class="msg-notice-copy">
               <h4>${item.user}</h4>
               <p>${item.action} · ${item.date}</p>
-              <small data-action="message-like-thanks" data-id="${item.id}" data-user="${item.user}">${item.note}</small>
+              <small data-action="message-like-thanks" data-id="${item.id}" data-user="${item.user}" data-user-id="${item.userId || ""}">${item.note}</small>
             </div>
             <img src="${item.cover}" alt="${item.user}互动封面" data-action="message-open-content" data-world="${item.worldId}" />
           </article>
@@ -5889,7 +6887,7 @@ function pageMessageFollows() {
               <h4>${item.user}</h4>
               <p>${item.intro} · ${item.date}</p>
             </div>
-            <button class="msg-follow-btn" data-action="message-follow-action" data-id="${item.id}" data-user="${item.user}" data-label="${item.action}">${uiState.messageFollowActions[item.id] || item.action}</button>
+            <button class="msg-follow-btn" data-action="message-follow-action" data-id="${item.id}" data-user="${item.user}" data-user-id="${item.userId || ""}" data-label="${item.action}">${uiState.messageFollowActions[item.id] || item.action}</button>
           </article>
         `).join("")}
       </div>
@@ -6089,13 +7087,54 @@ function pageMe() {
       </section>
     `);
   }
+  const viewedId = String(uiState.meViewedUserId || "").trim();
+  const viewedName = String(uiState.meViewedUserName || "").trim();
+  const viewingOther = Boolean(
+    (viewedId && viewedId !== uiState.currentUserId)
+    || (viewedName && viewedName !== uiState.profile.name)
+  );
+  const viewedProfile = viewingOther
+    ? buildAuthorProfileByName(viewedName || AUTHOR_DIRECTORY[viewedId]?.name || "Drama 用户", viewedId)
+    : null;
+  if (viewingOther && viewedProfile) {
+    uiState.modalProfile = viewedProfile;
+    uiState.isFollowingAuthor = Boolean(viewedProfile.isFollowedByMe);
+  }
+
   const tab = uiState.meContentTab;
   const creatorWorks = buildCreatorWorks();
   const feed = ME_CONTENT_LIBRARY[tab] || [];
   const creatorTitleSet = new Set(creatorWorks.map((x) => x.title));
-  const uniqueFeed = tab === "works"
+  const ownFeed = tab === "works"
     ? feed.filter((x) => !creatorTitleSet.has(x.title))
     : feed;
+
+  const visitorWorks = viewingOther
+    ? FEED_DATA
+      .filter((x) => String(x.authorId || "").trim() === viewedId || (viewedProfile && x.author === viewedProfile.name))
+      .map((x) => ({
+        id: x.id,
+        title: x.title,
+        meta: `${x.theme || "主题"} · ${x.background || "背景"}`,
+        stat: `收藏 ${formatMetricCount(x.star)} · 点赞 ${formatMetricCount(x.like)}`
+      }))
+    : [];
+  const visitorFeedByTab = {
+    works: visitorWorks,
+    likes: [],
+    favorites: [],
+    history: []
+  };
+  const uniqueFeed = viewingOther ? (visitorFeedByTab[tab] || []) : ownFeed;
+
+  const displayedName = viewingOther ? (viewedProfile?.name || viewedName || "Drama 用户") : uiState.profile.name;
+  const displayedHandle = viewingOther ? (viewedProfile?.handle || toHandle(displayedName)) : uiState.profile.handle;
+  const displayedBio = viewingOther ? (viewedProfile?.bio || "热爱创作与互动剧情") : uiState.profile.bio;
+  const storyCount = viewingOther ? toMetricCount(viewedProfile?.stats?.works || 0) : uiState.meStats.storyCount;
+  const likedCount = viewingOther ? 0 : uiState.meStats.likedCount;
+  const fansCount = viewingOther ? toMetricCount(viewedProfile?.stats?.fans || 0) : uiState.meStats.fansCount;
+  const coinCount = viewingOther ? 0 : (uiState.userCoins || 0);
+  const avatarText = getAvatarText(displayedName);
   const coverClass = uiState.meHeroCover ? "me-hero me-hero-cover" : "me-hero";
   const coverStyle = uiState.meHeroCover ? `style='--me-hero-cover:${uiState.meHeroCover};'` : "";
   const meMenuGroups = [
@@ -6107,33 +7146,56 @@ function pageMe() {
   ];
   return renderExploreShell(`
     <section class="me-page">
-      <article class="${coverClass}" ${coverStyle}>
+      <article class="${coverClass} ${viewingOther ? "me-hero-visitor" : ""}" ${coverStyle}>
         <div class="me-hero-nav">
-          <button class="me-menu-trigger" data-action="toggle-me-menu" aria-label="打开菜单">
-            <span></span><span></span><span></span>
-          </button>
-          <div class="me-hero-nav-right">
-            <button class="me-nav-icon" data-action="me-menu-feedback" data-text="扫一扫即将上线" aria-label="扫一扫">⌲</button>
-            <button class="me-nav-icon" data-action="me-menu-feedback" data-text="分享能力即将上线" aria-label="分享">↗</button>
-          </div>
+          ${
+            viewingOther
+              ? `<button class="me-inline-back unified-back-btn" data-action="go-back" aria-label="返回">←</button><div></div>`
+              : `
+            <button class="me-menu-trigger" data-action="toggle-me-menu" aria-label="打开菜单">
+              <span></span><span></span><span></span>
+            </button>
+            <div class="me-hero-nav-right">
+              <button class="me-nav-icon" data-action="me-menu-feedback" data-text="扫一扫即将上线" aria-label="扫一扫">⌲</button>
+              <button class="me-nav-icon" data-action="me-menu-feedback" data-text="分享能力即将上线" aria-label="分享">↗</button>
+            </div>
+          `
+          }
         </div>
         <div class="me-hero-top">
-          <button class="me-avatar" data-action="open-self-profile">序</button>
+          <button
+            class="me-avatar"
+            data-action="open-profile-avatar-preview"
+            data-avatar-name="${escapeHtml(displayedName)}"
+            data-avatar-handle="${escapeHtml(displayedHandle)}"
+            data-avatar-text="${escapeHtml(avatarText)}"
+          >${avatarText}</button>
           <div class="me-meta">
-            <h2>${escapeHtml(uiState.profile.name)}</h2>
-            <p>${escapeHtml(uiState.profile.handle)}</p>
-            <small>${escapeHtml(uiState.profile.bio)}</small>
+            <h2>${escapeHtml(displayedName)}</h2>
+            <p>${escapeHtml(displayedHandle)}</p>
+            <small>${escapeHtml(displayedBio)}</small>
           </div>
           <div class="me-hero-actions">
-            <button class="me-edit-btn" data-action="open-self-profile">编辑资料</button>
-            <button class="me-setting-btn" data-go="#/me/settings" aria-label="设置">⚙</button>
+            ${
+              viewingOther
+                ? `
+              <button class="me-edit-btn ${Boolean(viewedProfile?.isFollowedByMe) ? "active" : ""}" data-action="toggle-follow-author">
+                ${Boolean(viewedProfile?.isFollowedByMe) ? "已关注" : "关注"}
+              </button>
+              <button class="me-edit-btn ghost" data-action="me-visitor-chat">私信</button>
+            `
+                : `
+              <button class="me-edit-btn" data-action="open-profile-edit-modal">编辑资料</button>
+              <button class="me-setting-btn" data-go="#/me/settings" aria-label="设置">⚙</button>
+            `
+            }
           </div>
         </div>
         <div class="me-stats">
-          <button data-action="me-stat-feedback" data-text="故事管理将在下个版本开放"><b>6</b> 故事数</button>
-          <button data-action="me-stat-feedback" data-text="获赞分析将在下个版本开放"><b>9.4w</b> 获赞量</button>
-          <button data-go="#/me/followers"><b>12.8k</b> 粉丝</button>
-          <button data-go="#/me/coins"><b>${(uiState.userCoins || 0).toLocaleString()}</b> 马内</button>
+          <button data-action="noop"><b>${formatMetricCount(storyCount)}</b> 故事数</button>
+          <button data-action="noop"><b>${formatMetricCount(likedCount)}</b> 获赞量</button>
+          <button ${viewingOther ? 'data-action="noop"' : 'data-go="#/me/followers"'}><b>${formatMetricCount(fansCount)}</b> 粉丝</button>
+          <button ${viewingOther ? 'data-action="noop"' : 'data-go="#/me/coins"'}><b>${formatMetricCount(coinCount)}</b> 马内</button>
         </div>
       </article>
 
@@ -6191,34 +7253,40 @@ function pageMe() {
           }
         </div>
       </article>
-      ${uiState.meMenuOpen ? '<div class="me-side-mask" data-action="close-me-menu"></div>' : ""}
-      <aside class="me-side-sheet ${uiState.meMenuOpen ? "open" : ""}" data-action="noop">
-        <div class="me-side-sheet-inner">
-          ${meMenuGroups
-            .map(
-              (group) => `
-            <div class="me-side-group">
-              ${group
-                .map(
-                  (item) => `
-                <button data-action="me-menu-feedback" data-text="${item}功能待接入">
-                  <span class="me-side-item-icon"></span>
-                  <span>${item}</span>
-                </button>
-              `
-                )
-                .join("")}
+      ${
+        viewingOther
+          ? ""
+          : `
+        ${uiState.meMenuOpen ? '<div class="me-side-mask" data-action="close-me-menu"></div>' : ""}
+        <aside class="me-side-sheet ${uiState.meMenuOpen ? "open" : ""}" data-action="noop">
+          <div class="me-side-sheet-inner">
+            ${meMenuGroups
+              .map(
+                (group) => `
+              <div class="me-side-group">
+                ${group
+                  .map(
+                    (item) => `
+                  <button data-action="me-menu-feedback" data-text="${item}功能待接入">
+                    <span class="me-side-item-icon"></span>
+                    <span>${item}</span>
+                  </button>
+                `
+                  )
+                  .join("")}
+              </div>
+            `
+              )
+              .join("")}
+            <div class="me-side-bottom">
+              <button data-action="me-menu-feedback" data-text="扫一扫即将上线"><span>⌲</span><small>扫一扫</small></button>
+              <button data-action="me-menu-feedback" data-text="帮助与客服即将上线"><span>◌</span><small>帮助与客服</small></button>
+              <button data-go="#/me/settings"><span>⚙</span><small>设置</small></button>
             </div>
-          `
-            )
-            .join("")}
-          <div class="me-side-bottom">
-            <button data-action="me-menu-feedback" data-text="扫一扫即将上线"><span>⌲</span><small>扫一扫</small></button>
-            <button data-action="me-menu-feedback" data-text="帮助与客服即将上线"><span>◌</span><small>帮助与客服</small></button>
-            <button data-go="#/me/settings"><span>⚙</span><small>设置</small></button>
           </div>
-        </div>
-      </aside>
+        </aside>
+      `
+      }
     </section>
   `);
 }
@@ -6229,7 +7297,16 @@ function pageMeFollowers() {
   }
   const tab = uiState.meRelationTab;
   const query = (uiState.meRelationSearch || "").trim().toLowerCase();
-  const list = ME_RELATION_USERS.filter((x) => x.tab === tab).filter((x) => {
+  const isFan = (x) => Boolean(x?.isFan || x?.tab === "粉丝" || x?.tab === "朋友");
+  const isFollowing = (x) => Boolean(x?.isFollowing || x?.tab === "关注" || x?.tab === "朋友");
+  const fansTotal = ME_RELATION_USERS.filter((x) => isFan(x)).length;
+  const followsTotal = ME_RELATION_USERS.filter((x) => isFollowing(x)).length;
+  const mutualTotal = ME_RELATION_USERS.filter((x) => isFan(x) && isFollowing(x)).length;
+  const list = ME_RELATION_USERS.filter((x) => {
+    if (tab === "粉丝") return isFan(x) && !isFollowing(x);
+    if (tab === "关注") return isFollowing(x) && !isFan(x);
+    return isFan(x) && isFollowing(x);
+  }).filter((x) => {
     if (!query) return true;
     return `${x.name} ${x.handle} ${x.intro}`.toLowerCase().includes(query);
   });
@@ -6241,9 +7318,9 @@ function pageMeFollowers() {
       </div>
       <article class="me-followers-head">
         <div class="me-relation-kpi">
-          <div><b>${ME_RELATION_USERS.filter((x) => x.tab === "粉丝").length}</b><span>全部粉丝</span></div>
-          <div><b>+26</b><span>7日新增</span></div>
-          <div><b>38%</b><span>互动率</span></div>
+          <div><b>${fansTotal}</b><span>全部粉丝</span></div>
+          <div><b>${followsTotal}</b><span>全部关注</span></div>
+          <div><b>${mutualTotal}</b><span>互相关注</span></div>
         </div>
         <div class="me-tab-row">
           ${["粉丝", "关注", "朋友"].map((x) => `<button class="${tab === x ? "active" : ""}" data-action="me-relation-tab" data-tab="${x}">${x}</button>`).join("")}
@@ -6265,7 +7342,7 @@ function pageMeFollowers() {
             </div>
             <div class="actions">
               <button class="msg-follow-btn" data-action="me-follower-follow-toggle" data-id="${x.id}">${uiState.meRelationFollowing[x.id] ? "已关注" : "关注"}</button>
-              <button class="msg-follow-btn ghost" data-action="me-follower-chat" data-name="${x.name}">私信</button>
+              <button class="msg-follow-btn ghost" data-action="me-follower-chat" data-id="${x.id}" data-name="${x.name}">私信</button>
             </div>
           </article>
         `)
@@ -6313,8 +7390,18 @@ function pageMeCoins() {
     `);
   }
 
-  const incomeSum = COIN_BILLS.filter((x) => x.amount > 0).reduce((sum, x) => sum + x.amount, 0);
-  const expenseSum = Math.abs(COIN_BILLS.filter((x) => x.amount < 0).reduce((sum, x) => sum + x.amount, 0));
+  const nowTs = Date.now();
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  const recentBills = COIN_BILLS.filter((x) => {
+    const ts = x?.createdAt ? new Date(x.createdAt).getTime() : NaN;
+    return Number.isFinite(ts) && nowTs - ts <= sevenDaysMs;
+  });
+  const incomeSum = recentBills.filter((x) => x.amount > 0).reduce((sum, x) => sum + x.amount, 0);
+  const expenseSum = Math.abs(recentBills.filter((x) => x.amount < 0).reduce((sum, x) => sum + x.amount, 0));
+  const doneTasks = COIN_TASKS.filter((x) => x.done).length;
+  const totalTasks = COIN_TASKS.length;
+  const completionRate = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
+  const netAmount = COIN_BILLS.reduce((sum, x) => sum + Number(x.amount || 0), 0);
 
   return renderExploreShell(`
     <section class="me-coins-page">
@@ -6341,8 +7428,8 @@ function pageMeCoins() {
       <article class="me-coins-kpi">
         <div><b>+${incomeSum}</b><span>近7日收入</span></div>
         <div><b>${expenseSum}</b><span>近7日支出</span></div>
-        <div><b>Lv.4</b><span>资产等级</span></div>
-        <div><b>83%</b><span>任务完成率</span></div>
+        <div><b>${COIN_BILLS.length}</b><span>账单总笔数</span></div>
+        <div><b>${completionRate}%</b><span>任务完成率</span></div>
       </article>
 
       <article class="me-coins-tabs">
@@ -6432,6 +7519,23 @@ function pageMeCoins() {
             `
               )
               .join("")}
+          </article>
+          <article class="me-coins-list">
+            <h3>累计统计</h3>
+            <div class="me-coin-item">
+              <div>
+                <h4>历史净收益</h4>
+                <small>累计账单汇总</small>
+              </div>
+              <strong class="${netAmount >= 0 ? "income" : "expense"}">${netAmount >= 0 ? "+" : ""}${netAmount}</strong>
+            </div>
+            <div class="me-coin-item">
+              <div>
+                <h4>任务完成数</h4>
+                <small>已完成 / 总任务</small>
+              </div>
+              <strong>${doneTasks}/${totalTasks}</strong>
+            </div>
           </article>
           <article class="me-coins-benefits">
             ${COIN_BENEFITS.slice(0, 2)
@@ -6550,7 +7654,10 @@ const renderers = {
   "#/author/detail/favorites": pageAuthorDetail,
   "#/play/core": pagePlayCore,
   "#/play/model": pagePlayModel,
-  "#/workshop/world": pageWorkshop,
+  "#/workshop/world": pageWorkshopEntry,
+  "#/workshop/world/editor": pageWorkshopWorldEditor,
+  "#/workshop/story/editor": pageWorkshopStoryEditor,
+  "#/workshop/character/editor": pageWorkshopCharacterEditor,
   "#/community/home": pageCommunity,
   "#/community/join": pageCommunityJoin,
   "#/community/mine": pageCommunityMine,
@@ -6594,11 +7701,14 @@ const renderers = {
 function render() {
   const current = window.location.hash || "#/theater/home";
   document.body.classList.toggle("play-route", current.startsWith("#/play"));
+  document.body.classList.toggle("message-thread-route", current.startsWith("#/messages/thread"));
+  document.body.classList.toggle("world-detail-route", current === "#/world/detail");
   const renderer = renderers[current] || pageLogin;
   app.innerHTML = renderer();
   syncWorldRoleScroll();
   ensureCarouselTimer();
   ensureDramaHeroTimer();
+  ensureMessageRealtimeSync();
   focusSearchInputIfNeeded();
   ensureFullDataOnDemand(current);
 }
@@ -6681,6 +7791,49 @@ function ensureDramaHeroTimer() {
   }
 }
 
+let messageRealtimeTimer;
+let messageRealtimeSyncing = false;
+function ensureMessageRealtimeSync() {
+  const onThreadPage = (window.location.hash || "").startsWith("#/messages/thread");
+  const canSync = onThreadPage && uiState.isLoggedIn && Boolean(uiState.currentUserId);
+  if (!canSync && messageRealtimeTimer) {
+    clearInterval(messageRealtimeTimer);
+    messageRealtimeTimer = undefined;
+    return;
+  }
+  if (!canSync) return;
+  const runSync = () => {
+    if (messageRealtimeSyncing) return;
+    messageRealtimeSyncing = true;
+    void syncActiveConversationThread()
+      .then((changed) => {
+        const activeId = getActiveConversationId();
+        if (activeId && uiState.messageReadAckConversationId !== activeId) {
+          void markConversationReadOnServer(activeId)
+            .then(() => {
+              uiState.messageReadAckConversationId = activeId;
+            })
+            .catch(() => {});
+        }
+        if (changed) {
+          render();
+          requestAnimationFrame(() => {
+            const wrap = document.querySelector(".dm-modern-messages");
+            if (wrap) wrap.scrollTop = wrap.scrollHeight;
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        messageRealtimeSyncing = false;
+      });
+  };
+  runSync();
+  if (!messageRealtimeTimer) {
+    messageRealtimeTimer = setInterval(runSync, 2000);
+  }
+}
+
 document.addEventListener("click", (event) => {
   const inCommunitySearchFlow = window.location.hash.startsWith("#/community");
   const plusTrigger = event.target.closest("[data-action='toggle-message-plus']");
@@ -6713,19 +7866,7 @@ document.addEventListener("click", (event) => {
   const profileAvatarTrigger = event.target.closest(".user-avatar-click");
   if (profileAvatarTrigger) {
     const userName = resolveUserNameFromNode(profileAvatarTrigger);
-    if (userName) {
-      openAuthorProfileByName(userName);
-    } else {
-      if (!uiState.isLoggedIn) {
-        uiState.showLoginModal = true;
-      } else {
-        uiState.modalProfile = null;
-        uiState.showUserModal = true;
-        uiState.viewingSelfProfile = true;
-        uiState.isEditingProfile = false;
-        uiState.profileDraft = { ...uiState.profile };
-      }
-    }
+    openAuthorProfileByName(userName);
     render();
     return;
   }
@@ -6818,12 +7959,20 @@ document.addEventListener("click", (event) => {
     }
     if (action === "message-like-thanks") {
       const user = actionTarget.getAttribute("data-user") || "对方";
-      const targetThread = ensurePrivateThreadByUser(user);
-      uiState.selectedMessageId = targetThread.id;
-      pushThreadMessage(targetThread.id, "谢谢你的点赞和收藏，真的很有动力！", "me");
-      markMessageRead(targetThread.id);
-      uiState.messageFeedback = "";
-      window.location.hash = "#/messages/thread";
+      const userId = actionTarget.getAttribute("data-user-id") || "";
+      void openOrCreateDirectThread(userId, user)
+        .then((conversationId) => {
+          if (!conversationId) return;
+          return sendMessageToThread(conversationId, "谢谢你的点赞和收藏，真的很有动力！")
+            .then(() => {
+              pushThreadMessage(conversationId, "谢谢你的点赞和收藏，真的很有动力！", "me");
+              render();
+            });
+        })
+        .catch((error) => {
+          uiState.messageFeedback = `发私信失败：${error instanceof Error ? error.message : "unknown"}`;
+          render();
+        });
       return;
     }
     if (action === "message-open-content") {
@@ -6835,12 +7984,13 @@ document.addEventListener("click", (event) => {
     if (action === "message-follow-action") {
       const id = actionTarget.getAttribute("data-id") || "";
       const user = actionTarget.getAttribute("data-user") || "对方";
+      const userId = actionTarget.getAttribute("data-user-id") || "";
       const label = actionTarget.getAttribute("data-label") || "关注";
       if (label === "发私信") {
-        const targetThread = ensurePrivateThreadByUser(user);
-        uiState.selectedMessageId = targetThread.id;
-        markMessageRead(targetThread.id);
-        window.location.hash = "#/messages/thread";
+        void openOrCreateDirectThread(userId, user).catch((error) => {
+          uiState.messageFeedback = `发私信失败：${error instanceof Error ? error.message : "unknown"}`;
+          render();
+        });
         return;
       }
       if (id) {
@@ -6959,19 +8109,17 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "me-follower-follow-toggle") {
-      const id = actionTarget.getAttribute("data-id");
-      if (!id) return;
-      uiState.meRelationFollowing[id] = !uiState.meRelationFollowing[id];
-      uiState.meFeedback = uiState.meRelationFollowing[id] ? "已关注" : "已取消关注";
+      uiState.meFeedback = "关注能力待接入，当前仅展示真实关系数据";
       render();
       return;
     }
     if (action === "me-follower-chat") {
       const name = actionTarget.getAttribute("data-name") || "对方";
-      const thread = ensurePrivateThreadByUser(name);
-      uiState.selectedMessageId = thread.id;
-      markMessageRead(thread.id);
-      window.location.hash = "#/messages/thread";
+      const targetUserId = actionTarget.getAttribute("data-id") || "";
+      void openOrCreateDirectThread(targetUserId, name).catch((error) => {
+        uiState.messageFeedback = `发私信失败：${error instanceof Error ? error.message : "unknown"}`;
+        render();
+      });
       return;
     }
     if (action === "me-coin-tab") {
@@ -7087,7 +8235,11 @@ document.addEventListener("click", (event) => {
     }
     if (action === "me-logout") {
       uiState.isLoggedIn = false;
-      uiState.showUserModal = false;
+      uiState.currentUserId = "";
+      uiState.bootstrapFullLoaded = false;
+      uiState.bootstrapFullLoading = false;
+      persistAuthUserId();
+      uiState.showProfileEditModal = false;
       uiState.meFeedback = "";
       uiState.showLoginModal = true;
       render();
@@ -7096,7 +8248,13 @@ document.addEventListener("click", (event) => {
     if (action === "open-message-thread") {
       const id = actionTarget.getAttribute("data-id");
       if (id) {
+        if (!isUuid(id)) {
+          uiState.messageFeedback = "会话ID无效，请从真实消息列表进入";
+          render();
+          return;
+        }
         uiState.selectedMessageId = id;
+        uiState.messageReadAckConversationId = "";
         markMessageRead(id);
         moveMessageToTop(id);
       }
@@ -7123,11 +8281,8 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "clear-message-thread") {
-      const activeId = uiState.selectedMessageId || MESSAGE_INBOX[0]?.id || "";
-      uiState.messageThreads[activeId] = [];
-      updateMessageInboxPreview(activeId, "暂无消息，发一条开始聊天吧");
-      markMessageRead(activeId);
       uiState.messageThreadMenuOpen = false;
+      showMessageFeedback("清空聊天待接入后端接口，当前仅支持真实消息展示");
       render();
       return;
     }
@@ -7150,8 +8305,12 @@ document.addEventListener("click", (event) => {
         render();
         return;
       }
-      const activeId = uiState.selectedMessageId || MESSAGE_INBOX[0]?.id || "";
-      if (!activeId) return;
+      const activeId = getActiveConversationId();
+      if (!activeId || !isUuid(activeId)) {
+        uiState.messageFeedback = "请先打开一个真实会话再发送";
+        render();
+        return;
+      }
       const draft = uiState.messageThreadDraft;
       uiState.messageThreadDraft = "";
       uiState.messageThreadToolsOpen = false;
@@ -7160,6 +8319,7 @@ document.addEventListener("click", (event) => {
       void sendMessageToThread(activeId, text)
         .then(() => {
           pushThreadMessage(activeId, text, "me");
+          uiState.messageReadAckConversationId = "";
           render();
           requestAnimationFrame(() => {
             const wrap = document.querySelector(".dm-modern-messages");
@@ -8187,6 +9347,139 @@ document.addEventListener("click", (event) => {
       }
       return;
     }
+    if (action === "open-world-share") {
+      uiState.showWorldShareSheet = true;
+      uiState.worldShareMode = "picker";
+      uiState.worldShareSelectedUserId = "";
+      uiState.worldShareSelectedUserName = "";
+      uiState.worldShareDraft = "";
+      uiState.worldShareFeedback = "";
+      render();
+      return;
+    }
+    if (action === "close-world-share") {
+      uiState.showWorldShareSheet = false;
+      uiState.worldShareMode = "picker";
+      uiState.worldShareSelectedUserId = "";
+      uiState.worldShareSelectedUserName = "";
+      uiState.worldShareDraft = "";
+      uiState.worldShareFeedback = "";
+      render();
+      return;
+    }
+    if (action === "world-share-pick-friend") {
+      const targetUserId = String(actionTarget.getAttribute("data-user-id") || "").trim();
+      const targetName = String(actionTarget.getAttribute("data-user-name") || "").trim();
+      if (!targetName) return;
+      uiState.worldShareMode = "send";
+      uiState.worldShareSelectedUserId = targetUserId;
+      uiState.worldShareSelectedUserName = targetName;
+      uiState.worldShareDraft = `给你分享一个我觉得不错的故事卡：${getSelectedWorld()?.title || ""}`;
+      uiState.worldShareFeedback = "";
+      render();
+      return;
+    }
+    if (action === "world-share-back") {
+      uiState.worldShareMode = "picker";
+      uiState.worldShareFeedback = "";
+      render();
+      return;
+    }
+    if (action === "world-share-copy-link") {
+      const link = buildWorldShareUrl(getSelectedWorld());
+      copyTextToClipboard(link);
+      uiState.worldShareFeedback = "已复制当前卡片链接";
+      render();
+      setTimeout(() => {
+        if (uiState.worldShareFeedback === "已复制当前卡片链接") {
+          uiState.worldShareFeedback = "";
+          render();
+        }
+      }, 1400);
+      return;
+    }
+    if (action === "world-share-open-image") {
+      uiState.showWorldShareImageModal = true;
+      uiState.worldShareFeedback = "";
+      render();
+      return;
+    }
+    if (action === "close-world-share-image") {
+      uiState.showWorldShareImageModal = false;
+      render();
+      return;
+    }
+    if (action === "world-share-download-image") {
+      const world = getSelectedWorld();
+      const shareLink = buildWorldShareUrl(world);
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1620">
+          <defs>
+            <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#f5f6ff" />
+              <stop offset="100%" stop-color="#eceff7" />
+            </linearGradient>
+          </defs>
+          <rect width="1080" height="1620" fill="url(#bg)" />
+          <rect x="80" y="120" width="920" height="620" rx="40" fill="#d8cff8" />
+          <text x="100" y="820" font-size="64" font-family="Arial, sans-serif" fill="#111827" font-weight="700">${escapeHtml((world?.title || "未命名故事卡").slice(0, 22))}</text>
+          <text x="100" y="900" font-size="38" font-family="Arial, sans-serif" fill="#4b5563">${escapeHtml((world?.desc || "来看看这张故事卡").slice(0, 60))}</text>
+          <text x="100" y="1080" font-size="34" font-family="Arial, sans-serif" fill="#6b7280">作者：${escapeHtml(world?.author || "Drama 用户")}</text>
+          <text x="100" y="1140" font-size="34" font-family="Arial, sans-serif" fill="#6b7280">主题：${escapeHtml(world?.theme || "主题")} · ${escapeHtml(world?.format || "模式")}</text>
+          <rect x="80" y="1260" width="920" height="150" rx="24" fill="#ffffff" />
+          <text x="112" y="1348" font-size="30" font-family="Arial, sans-serif" fill="#1f2937">${escapeHtml(shareLink.slice(0, 58))}</text>
+        </svg>
+      `;
+      const encoded = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      const anchor = document.createElement("a");
+      anchor.href = encoded;
+      anchor.download = `${(world?.title || "story-share").replace(/[\\/:*?"<>|]+/g, "_")}.svg`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      uiState.worldShareFeedback = "分享图已下载";
+      render();
+      return;
+    }
+    if (action === "world-share-send") {
+      const targetName = String(uiState.worldShareSelectedUserName || "").trim();
+      const targetUserId = String(uiState.worldShareSelectedUserId || "").trim();
+      if (!targetName) return;
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      const extraText = String(uiState.worldShareDraft || "").trim();
+      const payload = `${extraText ? `${extraText}\n` : ""}${buildWorldShareMessage(getSelectedWorld())}`;
+      void startOrReuseDirectConversation(targetUserId, targetName, { navigate: false })
+        .then((conversationId) => {
+          if (!conversationId) return;
+          return sendMessageToThread(conversationId, payload).then(() => conversationId);
+        })
+        .then((conversationId) => {
+          if (!conversationId) return;
+          updateMessageInboxPreview(conversationId, "📨 故事卡分享");
+          uiState.worldShareFeedback = "已发送给好友";
+          uiState.worldShareMode = "picker";
+          uiState.worldShareDraft = "";
+          uiState.worldShareSelectedUserId = "";
+          uiState.worldShareSelectedUserName = "";
+          render();
+          setTimeout(() => {
+            if (uiState.worldShareFeedback === "已发送给好友") {
+              uiState.worldShareFeedback = "";
+              uiState.showWorldShareSheet = false;
+              render();
+            }
+          }, 1000);
+        })
+        .catch((error) => {
+          uiState.worldShareFeedback = `发送失败：${error instanceof Error ? error.message : "unknown"}`;
+          render();
+        });
+      return;
+    }
     if (action === "toggle-like-story") {
       const world = getSelectedWorld();
       if (!world?.id) return;
@@ -8199,7 +9492,8 @@ document.addEventListener("click", (event) => {
       const prevLikeCount = toMetricCount(world.like);
       const nextLiked = !prevLiked;
       const nextLikeCount = Math.max(0, prevLikeCount + (nextLiked ? 1 : -1));
-      syncWorldCardMetrics(world.id, { liked: nextLiked, like: formatMetricCount(nextLikeCount) });
+      queuePendingWorldReaction(world.id, "like", nextLiked);
+      syncWorldStateEverywhere(world.id, { liked: nextLiked, like: formatMetricCount(nextLikeCount) });
       if (nextLiked) upsertMeContentLibrary({ ...world, liked: nextLiked, like: formatMetricCount(nextLikeCount) }, "likes");
       else removeMeContentLibrary(world.id, "likes");
       render();
@@ -8213,7 +9507,7 @@ document.addEventListener("click", (event) => {
             like: formatMetricCount(stats.likesCount),
             star: formatMetricCount(stats.favoritesCount)
           };
-          syncWorldCardMetrics(world.id, {
+          syncWorldStateEverywhere(world.id, {
             liked: nextWorld.liked,
             favorited: nextWorld.favorited,
             like: nextWorld.like,
@@ -8222,12 +9516,16 @@ document.addEventListener("click", (event) => {
           if (nextWorld.liked) upsertMeContentLibrary(nextWorld, "likes");
           else removeMeContentLibrary(world.id, "likes");
           if (nextWorld.favorited) upsertMeContentLibrary(nextWorld, "favorites");
+          clearPendingWorldReaction(world.id, "like");
+          reconcileWorldReactionsInBackground();
           render();
         })
-        .catch(() => {
-          syncWorldCardMetrics(world.id, { liked: prevLiked, like: formatMetricCount(prevLikeCount) });
+        .catch((error) => {
+          syncWorldStateEverywhere(world.id, { liked: prevLiked, like: formatMetricCount(prevLikeCount) });
           if (prevLiked) upsertMeContentLibrary({ ...world, liked: prevLiked, like: formatMetricCount(prevLikeCount) }, "likes");
           else removeMeContentLibrary(world.id, "likes");
+          const msg = error instanceof Error ? error.message : "";
+          if (msg && msg !== "NETWORK_UNREACHABLE") clearPendingWorldReaction(world.id, "like");
           render();
         });
       return;
@@ -8244,7 +9542,8 @@ document.addEventListener("click", (event) => {
       const prevFavCount = toMetricCount(world.star);
       const nextFavorited = !prevFavorited;
       const nextFavCount = Math.max(0, prevFavCount + (nextFavorited ? 1 : -1));
-      syncWorldCardMetrics(world.id, { favorited: nextFavorited, star: formatMetricCount(nextFavCount) });
+      queuePendingWorldReaction(world.id, "favorite", nextFavorited);
+      syncWorldStateEverywhere(world.id, { favorited: nextFavorited, star: formatMetricCount(nextFavCount) });
       if (nextFavorited) upsertMeContentLibrary({ ...world, favorited: nextFavorited, star: formatMetricCount(nextFavCount) }, "favorites");
       else removeMeContentLibrary(world.id, "favorites");
       render();
@@ -8258,7 +9557,7 @@ document.addEventListener("click", (event) => {
             like: formatMetricCount(stats.likesCount),
             star: formatMetricCount(stats.favoritesCount)
           };
-          syncWorldCardMetrics(world.id, {
+          syncWorldStateEverywhere(world.id, {
             liked: nextWorld.liked,
             favorited: nextWorld.favorited,
             like: nextWorld.like,
@@ -8267,44 +9566,273 @@ document.addEventListener("click", (event) => {
           if (nextWorld.favorited) upsertMeContentLibrary(nextWorld, "favorites");
           else removeMeContentLibrary(world.id, "favorites");
           if (nextWorld.liked) upsertMeContentLibrary(nextWorld, "likes");
+          clearPendingWorldReaction(world.id, "favorite");
+          reconcileWorldReactionsInBackground();
+          render();
+        })
+        .catch((error) => {
+          syncWorldStateEverywhere(world.id, { favorited: prevFavorited, star: formatMetricCount(prevFavCount) });
+          if (prevFavorited) upsertMeContentLibrary({ ...world, favorited: prevFavorited, star: formatMetricCount(prevFavCount) }, "favorites");
+          else removeMeContentLibrary(world.id, "favorites");
+          const msg = error instanceof Error ? error.message : "";
+          if (msg && msg !== "NETWORK_UNREACHABLE") clearPendingWorldReaction(world.id, "favorite");
+          render();
+        });
+      return;
+    }
+    if (action === "world-comment-submit") {
+      const world = getSelectedWorld();
+      if (!world?.id) return;
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      const state = getWorldCommentState(world.id, toMetricCount(world.comment));
+      if (!state || state.submitting) return;
+      const text = getWorldCommentDraft(world.id).trim();
+      if (!text) return;
+
+      const optimistic = {
+        id: `tmp_${Date.now()}`,
+        user: String(uiState.profile?.name || "我"),
+        text,
+        likes: 0,
+        likedByMe: false,
+        createdAt: new Date().toISOString(),
+        time: "刚刚"
+      };
+      const prevCount = Number(state.commentsCount || 0);
+      state.submitting = true;
+      state.error = "";
+      state.comments.unshift(optimistic);
+      state.commentsCount = prevCount + 1;
+      setWorldCommentDraft(world.id, "");
+      syncWorldStateEverywhere(world.id, { comment: formatMetricCount(state.commentsCount) });
+      render();
+
+      void createWorldCardCommentAndSync(world.id, text)
+        .then(({ comment, commentsCount }) => {
+          state.submitting = false;
+          if (comment) {
+            state.comments[0] = comment;
+          }
+          state.commentsCount = Number.isFinite(commentsCount) && commentsCount >= 0 ? commentsCount : state.comments.length;
+          syncWorldStateEverywhere(world.id, { comment: formatMetricCount(state.commentsCount) });
+          render();
+        })
+        .catch((err) => {
+          state.submitting = false;
+          state.comments = state.comments.filter((x) => x !== optimistic);
+          state.commentsCount = Math.max(0, prevCount);
+          state.error = err instanceof Error ? err.message : "评论失败";
+          setWorldCommentDraft(world.id, text);
+          syncWorldStateEverywhere(world.id, { comment: formatMetricCount(state.commentsCount) });
+          render();
+        });
+      return;
+    }
+    if (action === "world-comment-like") {
+      const world = getSelectedWorld();
+      if (!world?.id) return;
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      const commentId = String(actionTarget.getAttribute("data-id") || "").trim();
+      if (!commentId) return;
+      const state = getWorldCommentState(world.id, toMetricCount(world.comment));
+      if (!state) return;
+      if (state.likingByCommentId[commentId]) return;
+      const idx = state.comments.findIndex((x) => String(x.id || "") === commentId);
+      if (idx < 0) return;
+      const item = state.comments[idx];
+      const prevLiked = Boolean(item.likedByMe);
+      const prevLikes = Number(item.likes || 0);
+      const nextLiked = !prevLiked;
+      item.likedByMe = nextLiked;
+      item.likes = Math.max(0, prevLikes + (nextLiked ? 1 : -1));
+      state.likingByCommentId[commentId] = true;
+      render();
+
+      void setWorldCardCommentLike(commentId, nextLiked)
+        .then((next) => {
+          state.likingByCommentId[commentId] = false;
+          if (next) {
+            item.likedByMe = Boolean(next.likedByMe);
+            item.likes = Number(next.likes || 0);
+          }
           render();
         })
         .catch(() => {
-          syncWorldCardMetrics(world.id, { favorited: prevFavorited, star: formatMetricCount(prevFavCount) });
-          if (prevFavorited) upsertMeContentLibrary({ ...world, favorited: prevFavorited, star: formatMetricCount(prevFavCount) }, "favorites");
-          else removeMeContentLibrary(world.id, "favorites");
+          state.likingByCommentId[commentId] = false;
+          item.likedByMe = prevLiked;
+          item.likes = prevLikes;
           render();
         });
       return;
     }
 
     if (action === "toggle-follow-author") {
-      uiState.isFollowingAuthor = !uiState.isFollowingAuthor;
-      uiState.authorFeedback = uiState.isFollowingAuthor ? "已关注，后续更新会第一时间通知你。" : "已取消关注。";
+      const profile = uiState.modalProfile;
+      const fallbackUserId = String(uiState.meViewedUserId || "").trim();
+      const fallbackUserName = String(uiState.meViewedUserName || "").trim();
+      const targetUserId = String(profile?.id || fallbackUserId || "").trim() || resolveAuthorIdByName(profile?.name || profile?.handle || fallbackUserName);
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      if (!targetUserId) {
+        uiState.authorFeedback = "未找到作者，暂时无法关注";
+        render();
+        return;
+      }
+      if (uiState.modalProfile && !uiState.modalProfile.id) uiState.modalProfile.id = targetUserId;
+      if (targetUserId === uiState.currentUserId) {
+        uiState.authorFeedback = "不能关注自己";
+        render();
+        return;
+      }
+      if (!uiState.modalProfile) {
+        uiState.modalProfile = buildAuthorProfileByName(
+          fallbackUserName || AUTHOR_DIRECTORY[targetUserId]?.name || "Drama 用户",
+          targetUserId
+        );
+      }
+      const nextFollow = !Boolean(uiState.modalProfile?.isFollowedByMe);
+      queuePendingFollowOp(targetUserId, nextFollow);
+      persistFollowState(targetUserId, nextFollow);
+      if (uiState.modalProfile) uiState.modalProfile.isFollowedByMe = nextFollow;
+      if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = nextFollow;
+      uiState.isFollowingAuthor = nextFollow;
+      uiState.authorFeedback = "";
       render();
-      setTimeout(() => {
-        if (uiState.authorFeedback) {
+      void setUserFollowRelation(targetUserId, nextFollow, { keepalive: true })
+        .then((relation) => {
+          const followedByMe = Boolean(relation?.followedByMe);
+          clearPendingFollowOp(targetUserId);
+          persistFollowState(targetUserId, followedByMe);
+          if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = followedByMe;
+          if (AUTHOR_DIRECTORY[targetUserId]) {
+            AUTHOR_DIRECTORY[targetUserId].followedByMe = followedByMe;
+            if (relation?.targetStats) {
+              AUTHOR_DIRECTORY[targetUserId].stats = {
+                ...AUTHOR_DIRECTORY[targetUserId].stats,
+                fansCount: toMetricCount(relation.targetStats.fansCount),
+                followsCount: toMetricCount(relation.targetStats.followsCount)
+              };
+            }
+          }
+          if (relation?.meStats) {
+            uiState.meStats.fansCount = toMetricCount(relation.meStats.fansCount);
+          }
+          uiState.isFollowingAuthor = followedByMe;
           uiState.authorFeedback = "";
+          return bootstrapClientDataFull(uiState.currentUserId);
+        })
+        .then(() => {
           render();
-        }
-      }, 1600);
+        })
+        .catch((error) => {
+          const msg = error instanceof Error ? error.message : "";
+          if (msg && msg !== "NETWORK_UNREACHABLE") clearPendingFollowOp(targetUserId);
+          persistFollowState(targetUserId, !nextFollow);
+          if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = !nextFollow;
+          if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = !nextFollow;
+          uiState.isFollowingAuthor = !nextFollow;
+          uiState.authorFeedback = `操作失败：${error instanceof Error ? error.message : "unknown"}`;
+          render();
+        });
+      return;
+    }
+    if (action === "toggle-world-author-follow") {
+      const targetUserIdRaw = String(actionTarget.getAttribute("data-user-id") || "").trim();
+      const targetUserName = String(actionTarget.getAttribute("data-user") || "").trim();
+      const targetUserId = targetUserIdRaw || resolveAuthorIdByName(targetUserName);
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      if (!targetUserId) {
+        uiState.authorFeedback = "未找到作者，暂时无法关注";
+        render();
+        return;
+      }
+      if (targetUserId === uiState.currentUserId) {
+        uiState.authorFeedback = "不能关注自己";
+        render();
+        return;
+      }
+      const nowFollowed = Boolean(AUTHOR_DIRECTORY[targetUserId]?.followedByMe);
+      const nextFollow = !nowFollowed;
+      queuePendingFollowOp(targetUserId, nextFollow);
+      persistFollowState(targetUserId, nextFollow);
+      if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = nextFollow;
+      if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = nextFollow;
+      uiState.authorFeedback = "";
+      render();
+      void setUserFollowRelation(targetUserId, nextFollow, { keepalive: true })
+        .then((relation) => {
+          const followedByMe = Boolean(relation?.followedByMe);
+          clearPendingFollowOp(targetUserId);
+          persistFollowState(targetUserId, followedByMe);
+          if (AUTHOR_DIRECTORY[targetUserId]) {
+            AUTHOR_DIRECTORY[targetUserId].followedByMe = followedByMe;
+            if (relation?.targetStats) {
+              AUTHOR_DIRECTORY[targetUserId].stats = {
+                ...AUTHOR_DIRECTORY[targetUserId].stats,
+                fansCount: toMetricCount(relation.targetStats.fansCount),
+                followsCount: toMetricCount(relation.targetStats.followsCount)
+              };
+            }
+          }
+          if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = followedByMe;
+          uiState.authorFeedback = "";
+          return bootstrapClientDataFull(uiState.currentUserId);
+        })
+        .then(() => {
+          render();
+        })
+        .catch((error) => {
+          const msg = error instanceof Error ? error.message : "";
+          if (msg && msg !== "NETWORK_UNREACHABLE") clearPendingFollowOp(targetUserId);
+          persistFollowState(targetUserId, nowFollowed);
+          if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = nowFollowed;
+          if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = nowFollowed;
+          uiState.authorFeedback = `操作失败：${error instanceof Error ? error.message : "unknown"}`;
+          render();
+        });
+      return;
+    }
+    if (action === "me-visitor-chat") {
+      const targetUserId = String(uiState.meViewedUserId || uiState.modalProfile?.id || "").trim();
+      const targetName = String(uiState.meViewedUserName || uiState.modalProfile?.name || "对方").trim();
+      if (!targetUserId) {
+        uiState.messageFeedback = "未找到用户，无法发起私聊";
+        render();
+        return;
+      }
+      void openOrCreateDirectThread(targetUserId, targetName).catch((error) => {
+        uiState.messageFeedback = `发私信失败：${error instanceof Error ? error.message : "unknown"}`;
+        render();
+      });
+      return;
+    }
+    if (action === "open-author-dm") {
+      const targetName = String(actionTarget.getAttribute("data-user") || uiState.modalProfile?.name || "对方").trim();
+      const targetUserId = String(actionTarget.getAttribute("data-user-id") || uiState.modalProfile?.id || "").trim();
+      void openOrCreateDirectThread(targetUserId, targetName).catch((error) => {
+        uiState.messageFeedback = `发私信失败：${error instanceof Error ? error.message : "unknown"}`;
+        render();
+      });
       return;
     }
     if (action === "open-user-modal") {
       const userName = resolveUserNameFromNode(actionTarget) || actionTarget.getAttribute("data-user") || "";
-      if (String(userName).trim()) {
-        openAuthorProfileByName(String(userName).trim());
-      } else {
-        if (!uiState.isLoggedIn) {
-          uiState.showLoginModal = true;
-        } else {
-          uiState.modalProfile = null;
-          uiState.showUserModal = true;
-          uiState.viewingSelfProfile = true;
-          uiState.isEditingProfile = false;
-          uiState.profileDraft = { ...uiState.profile };
-        }
-      }
+      openAuthorProfileByName(String(userName).trim());
       render();
       return;
     }
@@ -8314,36 +9842,51 @@ document.addEventListener("click", (event) => {
         render();
         return;
       }
-      uiState.modalProfile = null;
-      uiState.showUserModal = true;
-      uiState.viewingSelfProfile = true;
-      uiState.isEditingProfile = false;
+      uiState.meViewedUserId = "";
+      uiState.meViewedUserName = "";
+      persistViewedProfile();
+      if (window.location.hash !== "#/me/home") window.location.hash = "#/me/home";
+      else render();
+      return;
+    }
+    if (action === "open-profile-edit-modal") {
+      if (!uiState.isLoggedIn) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      uiState.profileDraft = { ...uiState.profile };
+      uiState.showProfileEditModal = true;
+      render();
+      return;
+    }
+    if (action === "open-profile-avatar-preview") {
+      const avatarName = String(actionTarget.getAttribute("data-avatar-name") || uiState.profile?.name || "Drama 用户").trim();
+      const avatarHandle = String(actionTarget.getAttribute("data-avatar-handle") || uiState.profile?.handle || "@drama_user").trim();
+      const avatarText = String(actionTarget.getAttribute("data-avatar-text") || getAvatarText(avatarName)).trim();
+      uiState.profileAvatarPreview = {
+        name: avatarName,
+        handle: avatarHandle,
+        avatarText: avatarText || getAvatarText(avatarName)
+      };
+      uiState.showProfileAvatarPreview = true;
+      render();
+      return;
+    }
+    if (action === "close-profile-avatar-preview") {
+      uiState.showProfileAvatarPreview = false;
+      render();
+      return;
+    }
+    if (action === "close-profile-edit-modal") {
+      uiState.showProfileEditModal = false;
       uiState.profileDraft = { ...uiState.profile };
       render();
       return;
     }
-    if (action === "close-user-modal") {
-      uiState.showUserModal = false;
-      uiState.isEditingProfile = false;
-      uiState.modalProfile = null;
-      render();
-      return;
-    }
-    if (action === "toggle-edit-profile") {
-      uiState.isEditingProfile = true;
-      uiState.profileDraft = { ...uiState.profile };
-      render();
-      return;
-    }
-    if (action === "save-profile-edit") {
+    if (action === "save-profile-edit-modal") {
       uiState.profile = { ...uiState.profileDraft };
-      uiState.isEditingProfile = false;
-      render();
-      return;
-    }
-    if (action === "cancel-profile-edit") {
-      uiState.isEditingProfile = false;
-      uiState.profileDraft = { ...uiState.profile };
+      uiState.showProfileEditModal = false;
       render();
       return;
     }
@@ -8394,8 +9937,21 @@ document.addEventListener("click", (event) => {
 
     if (action === "set-login-method") {
       const method = actionTarget.getAttribute("data-method");
-      if (method === "phone" || method === "account" || method === "wechat") {
+      if (method === "phone" || method === "account") {
         uiState.loginMethod = method;
+        if (method !== "account") uiState.accountAuthMode = "login";
+        uiState.loginLoading = false;
+        uiState.loginError = "";
+        render();
+      }
+      return;
+    }
+
+    if (action === "set-account-auth-mode") {
+      const mode = actionTarget.getAttribute("data-mode");
+      if (mode === "login" || mode === "register") {
+        uiState.accountAuthMode = mode;
+        uiState.loginLoading = false;
         uiState.loginError = "";
         render();
       }
@@ -8404,7 +9960,11 @@ document.addEventListener("click", (event) => {
 
     if (action === "confirm-login") {
       if (uiState.loginMethod === "account") {
-        void loginWithAccountAndSync();
+        if (uiState.accountAuthMode === "register") {
+          void registerWithAccountAndSync();
+        } else {
+          void loginWithAccountAndSync();
+        }
         return;
       }
       uiState.isLoggedIn = true;
@@ -8426,7 +9986,13 @@ document.addEventListener("click", (event) => {
     uiState.showLoginModal = true;
     go = "#/messages/chat";
   }
-  uiState.showUserModal = false;
+  if (go === "#/me/home" && !(target.getAttribute("data-preserve-viewed-profile") === "1")) {
+    uiState.meViewedUserId = "";
+    uiState.meViewedUserName = "";
+    persistViewedProfile();
+  }
+  uiState.showProfileEditModal = false;
+  uiState.showProfileAvatarPreview = false;
   uiState.searchPanelOpen = false;
   uiState.communitySearchPanelOpen = false;
   uiState.messagesPlusOpen = false;
@@ -8435,6 +10001,10 @@ document.addEventListener("click", (event) => {
   uiState.meMenuOpen = false;
   uiState.showDynamicComposer = false;
   uiState.dynamicShareFeedback = "";
+  uiState.showWorldShareSheet = false;
+  uiState.showWorldShareImageModal = false;
+  uiState.worldShareMode = "picker";
+  uiState.worldShareFeedback = "";
   if (window.location.hash === go) {
     render();
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -8467,6 +10037,10 @@ document.addEventListener("input", (event) => {
     }
     if (dynamicField === "dynamic-comment") {
       uiState.dynamicCommentDraft = target.value;
+      return;
+    }
+    if (dynamicField === "world-comment-draft") {
+      setWorldCommentDraft(getSelectedWorld()?.id, target.value);
       return;
     }
     if (dynamicField === "backstage-signature") {
@@ -8542,6 +10116,21 @@ document.addEventListener("input", (event) => {
       if (uiState.loginError) uiState.loginError = "";
       return;
     }
+    if (dynamicField === "register-account") {
+      uiState.registerAccount = target.value;
+      if (uiState.loginError) uiState.loginError = "";
+      return;
+    }
+    if (dynamicField === "register-password") {
+      uiState.registerPassword = target.value;
+      if (uiState.loginError) uiState.loginError = "";
+      return;
+    }
+    if (dynamicField === "register-confirm-password") {
+      uiState.registerConfirmPassword = target.value;
+      if (uiState.loginError) uiState.loginError = "";
+      return;
+    }
     if (dynamicField === "login-phone") {
       uiState.loginPhone = target.value;
       return;
@@ -8554,8 +10143,16 @@ document.addEventListener("input", (event) => {
       uiState.messageThreadDraft = target.value;
       return;
     }
+    if (dynamicField === "world-share-draft") {
+      uiState.worldShareDraft = target.value;
+      return;
+    }
     if (dynamicField === "play-action-draft") {
       uiState.playActionDraft = target.value;
+      return;
+    }
+    if (dynamicField === "world-comment-draft") {
+      setWorldCommentDraft(getSelectedWorld()?.id, target.value);
       return;
     }
     if (dynamicField.startsWith("workshop-world-")) {
@@ -8650,6 +10247,14 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
+  if (target.getAttribute("data-field") === "world-comment-draft") {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const sendBtn = document.querySelector("[data-action='world-comment-submit']");
+      if (sendBtn instanceof HTMLElement) sendBtn.click();
+    }
+    return;
+  }
   if (target.getAttribute("data-field") === "message-search") {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -8666,11 +10271,21 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  if (target.getAttribute("data-field") === "login-password" || target.getAttribute("data-field") === "login-account") {
+  if (
+    target.getAttribute("data-field") === "login-password"
+    || target.getAttribute("data-field") === "login-account"
+    || target.getAttribute("data-field") === "register-account"
+    || target.getAttribute("data-field") === "register-password"
+    || target.getAttribute("data-field") === "register-confirm-password"
+  ) {
     if (event.key === "Enter") {
       event.preventDefault();
       if (uiState.loginMethod === "account") {
-        void loginWithAccountAndSync();
+        if (uiState.accountAuthMode === "register") {
+          void registerWithAccountAndSync();
+        } else {
+          void loginWithAccountAndSync();
+        }
       }
     }
     return;
@@ -8699,20 +10314,57 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-window.addEventListener("hashchange", render);
+function scrollCurrentViewToTop() {
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+  document.querySelectorAll(".xh-main, .xh-main-message, .dm-modern-messages, .me-side-sheet-inner").forEach((node) => {
+    if (node instanceof HTMLElement) node.scrollTop = 0;
+  });
+}
+
+window.addEventListener("hashchange", () => {
+  render();
+  requestAnimationFrame(scrollCurrentViewToTop);
+});
 
 async function startApp() {
   hydrateSelectedWorldId();
-  const hasCache = tryHydrateFromCache();
+  const authUserId = hydrateAuthUserId();
+  if (authUserId) {
+    uiState.currentUserId = authUserId;
+    uiState.isLoggedIn = true;
+  }
+  const hasCache = authUserId
+    ? tryHydrateFullCache(authUserId)
+    : tryHydrateFromCache();
   if (!window.location.hash || window.location.hash === "#/") window.location.hash = "#/theater/home";
   if (hasCache && uiState.isLoggedIn && needsFullData(window.location.hash || "#/theater/home")) {
     tryHydrateFullCache(uiState.currentUserId);
   }
   render();
+  if (authUserId) {
+    await Promise.allSettled([flushPendingWorldReactions(), flushPendingFollowOps()]);
+    overlayWorldInteractionsForCurrentUser();
+    overlayFollowStateForCurrentUser();
+    render();
+  }
   try {
-    await bootstrapClientData();
+    if (authUserId) {
+      await bootstrapClientDataFull(authUserId);
+      uiState.bootstrapFullLoaded = true;
+    } else {
+      await bootstrapClientData();
+    }
     render();
   } catch (error) {
+    if (authUserId) {
+      try {
+        await bootstrapClientData(authUserId);
+        render();
+        return;
+      } catch {}
+    }
     if (hasCache) return;
     app.innerHTML = `
       <section class="screen">

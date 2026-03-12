@@ -1,8 +1,106 @@
 import { json, parseBody } from "../core/http.js";
-import { createWorldCard, listWorldCards, publishWorldCard, setWorldCardInteraction } from "../repos/worldcard-repo.js";
+import {
+  createWorldCard,
+  listWorldCards,
+  publishWorldCard,
+  setWorldCardInteraction,
+  listWorldCardComments,
+  createWorldCardComment,
+  setWorldCardCommentLike
+} from "../repos/worldcard-repo.js";
 import { invalidateBootstrapCoreCache } from "./bootstrap.js";
 
+function toClock(dateLike) {
+  if (!dateLike) return "刚刚";
+  const d = new Date(dateLike);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 export async function handleWorldCard(req, res, pathname) {
+  if (req.method === "GET" && pathname === "/api/v1/worldcards/comments") {
+    const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+    const worldCardId = String(url.searchParams.get("worldCardId") || "").trim();
+    const userId = String(url.searchParams.get("userId") || "").trim();
+    const limit = Number(url.searchParams.get("limit") || 100);
+    if (!worldCardId) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "worldCardId is required" });
+    }
+    const result = await listWorldCardComments(worldCardId, userId, limit);
+    const rows = Array.isArray(result?.comments) ? result.comments : [];
+    return json(res, 200, {
+      commentsCount: Number(result?.totalCount || rows.length),
+      comments: rows.map((row) => ({
+        id: row.id,
+        worldCardId: row.world_card_id,
+        userId: row.user_id,
+        user: row.user_name || "玩家",
+        text: row.content || "",
+        likes: Number(row.likes_count || 0),
+        likedByMe: Boolean(row.liked_by_me),
+        createdAt: row.created_at,
+        time: toClock(row.created_at)
+      }))
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/worldcards/comments") {
+    const body = await parseBody(req);
+    if (!body.worldCardId || !body.userId || !body.content) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "worldCardId, userId, content are required" });
+    }
+    const result = await createWorldCardComment({
+      worldCardId: body.worldCardId,
+      userId: body.userId,
+      content: body.content,
+      parentCommentId: body.parentCommentId || null
+    });
+    if (!result?.comment) {
+      return json(res, 404, { code: "WORLD_CARD_NOT_FOUND", message: "world card not found" });
+    }
+    invalidateBootstrapCoreCache();
+    return json(res, 201, {
+      comment: {
+        id: result.comment.id,
+        worldCardId: result.comment.world_card_id,
+        userId: result.comment.user_id,
+        user: result.comment.user_name || "玩家",
+        text: result.comment.content || "",
+        likes: Number(result.comment.likes_count || 0),
+        likedByMe: false,
+        createdAt: result.comment.created_at,
+        time: toClock(result.comment.created_at)
+      },
+      commentsCount: Number(result.commentsCount || 0)
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/worldcards/comments/like") {
+    const body = await parseBody(req);
+    if (!body.commentId || !body.userId) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "commentId, userId are required" });
+    }
+    const active = body.active !== false;
+    const result = await setWorldCardCommentLike({
+      commentId: body.commentId,
+      userId: body.userId,
+      active
+    });
+    if (!result) {
+      return json(res, 404, { code: "COMMENT_NOT_FOUND", message: "comment not found" });
+    }
+    return json(res, 200, {
+      comment: {
+        id: result.commentId,
+        worldCardId: result.worldCardId,
+        likes: Number(result.likesCount || 0),
+        likedByMe: Boolean(result.likedByMe)
+      },
+      active
+    });
+  }
+
   if (req.method === "POST" && pathname === "/api/v1/worldcards/interaction") {
     const body = await parseBody(req);
     if (!body.worldCardId || !body.userId || !body.interactionType) {
