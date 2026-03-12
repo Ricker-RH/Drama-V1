@@ -5008,12 +5008,7 @@ function pageCommunity() {
       <div class="xh-filter-panel expanded drama-filter-panel community-filter-drama">
         <div class="xh-filter-body">
           ${COMMUNITY_FILTER_CONFIG.map((group) => renderCommunityFilterGroup(group)).join("")}
-          <div class="community-filter-inline-reset"><button data-action="community-filter-reset">重置筛选</button></div>
         </div>
-      </div>
-      <div class="community-tab-switch community-home-feed-tabs">
-        <button class="active" data-go="#/community/home">推荐社群</button>
-        <button data-go="#/community/mine">我的社群</button>
       </div>
       <h3>推荐社群（${filteredList.length}）</h3>
       ${renderCommunityCards(filteredList)}
