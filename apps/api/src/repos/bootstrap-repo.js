@@ -99,24 +99,26 @@ async function buildAuthorDirectory(authorIds = [], viewerId = null) {
 }
 
 export async function getBootstrapPayload(userId = null, mode = "core") {
-  const userRes = await query(
-    `select
-      u.id,
-      u.nickname,
-      u.avatar_url,
-      u.bio,
-      coalesce(up.extra->>'handle', '@'||replace(lower(u.nickname), ' ', '_')) as handle,
-      up.cover_url,
-      coalesce(wa.balance, 0) as coins
-    from users u
-    left join user_profiles up on up.user_id = u.id
-    left join wallet_accounts wa on wa.user_id = u.id
-    where ($1::uuid is null or u.id = $1::uuid)
-    order by u.created_at asc
-    limit 1`,
-    [userId]
-  );
-  const currentUser = userRes.rows[0] || null;
+  let currentUser = null;
+  if (userId) {
+    const userRes = await query(
+      `select
+        u.id,
+        u.nickname,
+        u.avatar_url,
+        u.bio,
+        coalesce(up.extra->>'handle', '@'||replace(lower(u.nickname), ' ', '_')) as handle,
+        up.cover_url,
+        coalesce(wa.balance, 0) as coins
+      from users u
+      left join user_profiles up on up.user_id = u.id
+      left join wallet_accounts wa on wa.user_id = u.id
+      where u.id = $1::uuid
+      limit 1`,
+      [userId]
+    );
+    currentUser = userRes.rows[0] || null;
+  }
 
   if (mode === "core") {
     const [feedRes, worldMediaRes, dynamicRes, communityRes, hotSearchRes] = await Promise.all([
