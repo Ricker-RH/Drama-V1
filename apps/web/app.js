@@ -537,6 +537,7 @@ const uiState = {
   workshopPaintCategory: "all",
   workshopPaintSort: "latest",
   workshopPaintComposerOpen: false,
+  workshopBulkPublishing: false,
   meDraftActionOpen: false,
   meDraftActionCardId: "",
   playRound: 1,
@@ -6317,6 +6318,14 @@ async function saveWorkshopCardToApi() {
   }
 }
 
+async function publishCreatorCardById(cardId, publishPayload = {}, syncToDynamic = true) {
+  return apiJson(`/creator/cards/${cardId}/publish`, {
+    authorId: uiState.currentUserId,
+    syncToDynamic: syncToDynamic !== false,
+    publishPayload
+  });
+}
+
 async function publishWorkshopCardToApi(cardId) {
   if (!uiState.isLoggedIn || !uiState.currentUserId) {
     uiState.workshopFeedback = "请先登录后发布";
@@ -6328,11 +6337,7 @@ async function publishWorkshopCardToApi(cardId) {
   render();
   try {
     const { clues, ...publishPayload } = uiState.workshopPublishDraft || {};
-    const data = await apiJson(`/creator/cards/${cardId}/publish`, {
-      authorId: uiState.currentUserId,
-      syncToDynamic: uiState.workshopSyncDynamic,
-      publishPayload
-    });
+    const data = await publishCreatorCardById(cardId, publishPayload, uiState.workshopSyncDynamic);
     const card = data?.card;
     if (!card?.id) throw new Error("CARD_PUBLISH_FAILED");
     await syncWorkshopCardsFromApi({ silent: true });
@@ -6352,6 +6357,46 @@ async function publishWorkshopCardToApi(cardId) {
     uiState.workshopPublishing = false;
     render();
   }
+}
+
+async function publishAllDraftCardsForCurrentUser() {
+  if (!uiState.isLoggedIn || !uiState.currentUserId) {
+    uiState.showLoginModal = true;
+    render();
+    return;
+  }
+  const draftCards = (uiState.workshopSavedCards || []).filter((x) => String(x?.status || "") !== "published");
+  if (!draftCards.length) {
+    uiState.workshopFeedback = "当前没有可发布的草稿";
+    render();
+    return;
+  }
+  uiState.workshopBulkPublishing = true;
+  uiState.workshopFeedback = `正在发布 ${draftCards.length} 张草稿...`;
+  render();
+  let success = 0;
+  for (const card of draftCards) {
+    try {
+      const payload = buildWorkshopPublishDraftFromCard(card);
+      const { clues, ...publishPayload } = payload || {};
+      const data = await publishCreatorCardById(card.id, publishPayload, uiState.workshopSyncDynamic);
+      if (data?.worldCard?.id) upsertFeedDataFromPublishedWorldCard(data.worldCard);
+      success += 1;
+    } catch {}
+  }
+  await syncWorkshopCardsFromApi({ silent: true });
+  void bootstrapClientDataFull(uiState.currentUserId)
+    .then(() => {
+      uiState.bootstrapFullLoaded = true;
+      render();
+    })
+    .catch(() => {});
+  uiState.workshopBulkPublishing = false;
+  uiState.workshopFeedback = success === draftCards.length
+    ? `已发布 ${success} 张作品，首页与「我的-作品」已同步`
+    : `发布完成：成功 ${success} / ${draftCards.length}`;
+  uiState.meContentTab = "works";
+  render();
 }
 
 function getWorkshopCardTypeByMode(mode = "long_narrative") {
@@ -6412,7 +6457,7 @@ function buildWorkshopCardSnapshot(mode = uiState.workshopMode) {
   };
 }
 
-function seedWorkshopPublishDraft(card) {
+function buildWorkshopPublishDraftFromCard(card) {
   const d = normalizeWorkshopDraftForMode(card.mode, card.draft || {});
   const isStory = card.mode === "short_narrative";
   const isCharacter = card.mode === "virtual_character";
@@ -6428,7 +6473,7 @@ function seedWorkshopPublishDraft(card) {
     : isStory
       ? (d.primaryGoal || d.endingAnchors || "在限定范围内推进到结局锚点")
       : (d.primaryGoal || d.coreConflict || "围绕核心冲突推进主线");
-  uiState.workshopPublishDraft = {
+  return {
     title: card.title || "",
     chapter: isCharacter ? "初次接触" : isStory ? "第一幕" : "序章",
     mainQuest,
@@ -6443,6 +6488,10 @@ function seedWorkshopPublishDraft(card) {
     cover: "",
     statline: "连载中 · 内测版本"
   };
+}
+
+function seedWorkshopPublishDraft(card) {
+  uiState.workshopPublishDraft = buildWorkshopPublishDraftFromCard(card);
 }
 
 function getWorkshopPublishValidationErrors() {
@@ -8341,6 +8390,19 @@ function pageMe() {
           <button class="${tab === "favorites" ? "active" : ""}" data-action="me-content-tab" data-tab="favorites">收藏</button>
           <button class="${tab === "history" ? "active" : ""}" data-action="me-content-tab" data-tab="history">浏览</button>
         </div>
+        ${
+          !viewingOther && tab === "drafts"
+            ? `
+          <div class="workshop-action-row">
+            <button
+              class="primary"
+              data-action="me-publish-all-drafts"
+              ${uiState.workshopBulkPublishing ? "disabled" : ""}
+            >${uiState.workshopBulkPublishing ? "发布中..." : `发布全部草稿（${draftTabCards.length}）`}</button>
+          </div>
+        `
+            : ""
+        }
         <div class="me-content-grid">
           ${
             tab === "drafts"
@@ -9602,6 +9664,11 @@ document.addEventListener("click", (event) => {
       uiState.meContentTab = "drafts";
       uiState.meFeedback = "";
       render();
+      return;
+    }
+    if (action === "me-publish-all-drafts") {
+      if (uiState.workshopBulkPublishing) return;
+      void publishAllDraftCardsForCurrentUser();
       return;
     }
     if (action === "me-draft-open-action") {
