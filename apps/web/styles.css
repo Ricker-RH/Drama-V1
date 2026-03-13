@@ -4239,6 +4239,38 @@ body.world-detail-route .web-root {
   text-align: center;
 }
 
+.community-join-top {
+  position: relative;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 34px 1fr 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #ececf2;
+}
+
+.community-join-top h2 {
+  margin: 0;
+  text-align: center;
+}
+
+.community-join-back {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #ddd6fe;
+  border-radius: 999px;
+  background: #fff;
+  color: #6d28d9;
+  font-size: 19px;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
 .community-top-panel-plain {
   gap: 8px;
 }

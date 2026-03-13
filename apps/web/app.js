@@ -7189,7 +7189,11 @@ function pageCommunity() {
 function pageCommunityJoin() {
   return renderExploreShell(`
     <section class="community-page community-join-page">
-      <h3 class="community-join-title">加入社区</h3>
+      <div class="community-join-top">
+        <button class="community-join-back" data-action="go-back" aria-label="返回">←</button>
+        <h2>加入社区</h2>
+        <span></span>
+      </div>
       ${renderCommunityCards(COMMUNITY_LIST, "暂时没有可加入的社群")}
     </section>
   `);
