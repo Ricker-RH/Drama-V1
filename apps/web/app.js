@@ -10565,8 +10565,7 @@ document.addEventListener("click", (event) => {
       }
       const activeId = getActiveConversationId();
       if (!activeId || !isUuid(activeId)) {
-        uiState.messageFeedback = "请先打开一个真实会话再发送";
-        render();
+        showMessageFeedback("请先打开一个真实会话再发送");
         return;
       }
       const draft = uiState.messageThreadDraft;
@@ -10581,8 +10580,7 @@ document.addEventListener("click", (event) => {
         })
         .catch((err) => {
           uiState.messageThreadDraft = draft;
-          uiState.messageFeedback = `发送失败：${err instanceof Error ? err.message : "unknown"}`;
-          render();
+          showMessageFeedback(`发送失败：${err instanceof Error ? err.message : "unknown"}`);
         });
       return;
     }

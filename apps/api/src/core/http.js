@@ -11,15 +11,21 @@ export function json(res, statusCode, data) {
 }
 
 export function parseBody(req) {
+  const maxBodyBytesRaw = Number.parseInt(String(process.env.MAX_BODY_BYTES || "20971520"), 10);
+  const maxBodyBytes = Number.isFinite(maxBodyBytesRaw) && maxBodyBytesRaw > 0 ? maxBodyBytesRaw : 20 * 1024 * 1024;
   return new Promise((resolve, reject) => {
     let body = "";
+    let done = false;
     req.on("data", (chunk) => {
+      if (done) return;
       body += chunk;
-      if (body.length > 1_000_000) {
+      if (body.length > maxBodyBytes) {
+        done = true;
         reject(new Error("Body too large"));
       }
     });
     req.on("end", () => {
+      if (done) return;
       try {
         resolve(body ? JSON.parse(body) : {});
       } catch {
