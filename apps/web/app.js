@@ -432,6 +432,9 @@ const uiState = {
   communityPostPublished: false,
   communityGroupJoining: false,
   communityGroupFeedback: "",
+  communityMembersByCommunityId: {},
+  communityMembersLoadingByCommunityId: {},
+  communityMembersErrorByCommunityId: {},
   communityPostMeta: {},
   communityPostDetailLoadingId: "",
   communityPostDetailError: "",
@@ -2432,6 +2435,11 @@ function getMyCreatedCommunities() {
 }
 
 function getCommunityMemberPreviewList(community) {
+  const communityId = String(community?.id || "").trim();
+  const realMembers = communityId ? uiState.communityMembersByCommunityId[communityId] : null;
+  if (Array.isArray(realMembers) && realMembers.length) {
+    return realMembers;
+  }
   const total = Math.max(0, toMetricCount(community?.memberCount || 0));
   if (total <= 0) return [];
   if (COMMUNITY_MEMBERS.length >= total) return COMMUNITY_MEMBERS.slice(0, total);
@@ -2447,6 +2455,58 @@ function getCommunityMemberPreviewList(community) {
     });
   }
   return out;
+}
+
+function getCommunityRoleLabel(role) {
+  const value = String(role || "").trim().toLowerCase();
+  if (value === "owner") return "群主";
+  if (value === "admin") return "管理员";
+  return "成员";
+}
+
+function getCommunityMemberColor(seed) {
+  const src = String(seed || "");
+  let hash = 0;
+  for (let i = 0; i < src.length; i += 1) {
+    hash = (hash * 31 + src.charCodeAt(i)) >>> 0;
+  }
+  const palette = ["#c4b5fd", "#a5b4fc", "#93c5fd", "#f9a8d4", "#86efac", "#fcd34d", "#fca5a5", "#67e8f9"];
+  return palette[hash % palette.length];
+}
+
+async function fetchCommunityMembersAndSync(communityId, { force = false } = {}) {
+  const cid = String(communityId || "").trim();
+  if (!cid) return;
+  const loaded = Array.isArray(uiState.communityMembersByCommunityId[cid]);
+  if (loaded && !force) return;
+  if (uiState.communityMembersLoadingByCommunityId[cid]) return;
+  uiState.communityMembersLoadingByCommunityId[cid] = true;
+  uiState.communityMembersErrorByCommunityId[cid] = "";
+  render();
+  try {
+    const data = await apiGetJson(`/community/members?communityId=${encodeURIComponent(cid)}&limit=120`);
+    const list = Array.isArray(data?.members) ? data.members : [];
+    uiState.communityMembersByCommunityId[cid] = list.map((row) => {
+      const name = String(row?.nickname || "用户").trim() || "用户";
+      const handle = String(row?.handle || "").trim();
+      const roleText = getCommunityRoleLabel(row?.role);
+      const intro = handle ? `${handle} · ${roleText}` : roleText;
+      const avatarUrl = String(row?.avatar_url || "").trim();
+      return {
+        id: String(row?.user_id || "").trim(),
+        name,
+        role: roleText,
+        intro,
+        color: getCommunityMemberColor(row?.user_id || name),
+        avatarUrl
+      };
+    });
+  } catch (error) {
+    uiState.communityMembersErrorByCommunityId[cid] = error instanceof Error ? error.message : "成员加载失败";
+  } finally {
+    uiState.communityMembersLoadingByCommunityId[cid] = false;
+    render();
+  }
 }
 
 function getCommunityPosts(cid) {
@@ -2642,6 +2702,66 @@ function getAvatarText(name = "") {
   return (n || "玩").slice(0, 1);
 }
 
+function findRelationUserByIdentity(name = "", authorId = "") {
+  const safeAuthorId = String(authorId || "").trim();
+  if (!Array.isArray(ME_RELATION_USERS)) return null;
+  if (safeAuthorId) {
+    const hitById = ME_RELATION_USERS.find((x) => String(x?.id || "").trim() === safeAuthorId);
+    if (hitById) return hitById;
+  }
+  const needle = normalizeUserName(name);
+  if (!needle) return null;
+  return ME_RELATION_USERS.find((x) => {
+    const n1 = normalizeUserName(x?.name || "");
+    const n2 = normalizeUserName(x?.handle || "");
+    return n1 === needle || n2 === needle;
+  }) || null;
+}
+
+function syncRelationStateLocal(targetUserId = "", followed = false, profileHint = null) {
+  const tid = String(targetUserId || "").trim();
+  if (!tid) return;
+  const nextFollowed = Boolean(followed);
+  uiState.meRelationFollowing[tid] = nextFollowed;
+  const idx = ME_RELATION_USERS.findIndex((x) => String(x?.id || "").trim() === tid);
+  if (idx >= 0) {
+    const item = ME_RELATION_USERS[idx];
+    const isFan = Boolean(item?.isFan || item?.tab === "粉丝" || item?.tab === "朋友");
+    item.isFollowing = nextFollowed;
+    if (nextFollowed) {
+      item.tab = isFan ? "朋友" : "关注";
+    } else if (isFan) {
+      item.tab = "粉丝";
+    } else {
+      ME_RELATION_USERS.splice(idx, 1);
+    }
+    return;
+  }
+  if (!nextFollowed) return;
+  const source = profileHint || AUTHOR_DIRECTORY[tid] || {};
+  const name = String(source?.name || "").trim() || "Drama 用户";
+  ME_RELATION_USERS.unshift({
+    id: tid,
+    name,
+    handle: String(source?.handle || toHandle(name)),
+    intro: String(source?.bio || "Drama 玩家"),
+    fans: String(
+      source?.stats?.fansCount != null || source?.stats?.fans != null
+        ? formatMetricCount(source.stats.fansCount ?? source.stats.fans ?? 0)
+        : "0"
+    ),
+    tab: "关注",
+    isFan: false,
+    isFollowing: true
+  });
+}
+
+function resolveRelationUserIdByName(name = "") {
+  const hit = findRelationUserByIdentity(name, "");
+  const id = String(hit?.id || "").trim();
+  return isUuid(id) ? id : "";
+}
+
 function buildAuthorProfileByName(name = "", authorId = "") {
   const safeName = String(name || "").trim() || "Drama 用户";
   const works = FEED_DATA.filter((x) => x.author === safeName);
@@ -2653,18 +2773,36 @@ function buildAuthorProfileByName(name = "", authorId = "") {
     const n2 = normalizeUserName(x?.handle || "");
     return Boolean(needle && (n1 === needle || n2 === needle));
   }) || null;
-  const resolved = byId || byName;
+  const relationUser = findRelationUserByIdentity(safeName, safeAuthorId);
+  const resolved = byId || byName || null;
+  const resolvedId = String(resolved?.id || safeAuthorId || relationUser?.id || "").trim();
+  const isFollowedFromRelation = Boolean(
+    (resolvedId && uiState.meRelationFollowing?.[resolvedId])
+    || relationUser?.isFollowing
+    || relationUser?.tab === "关注"
+    || relationUser?.tab === "朋友"
+  );
   const stats = resolved?.stats || {};
+  const relationFans = relationUser?.fans ?? "0";
+  const followsFromStats = stats.followsCount ?? stats.follows ?? 0;
+  const worksFromStats = stats.worksCount ?? works.length;
+  const hasResolvedFollowFlag = Boolean(
+    resolved && Object.prototype.hasOwnProperty.call(resolved, "followedByMe")
+  );
   return {
-    id: resolved?.id || safeAuthorId || "",
+    id: resolvedId,
     name: resolved?.name || safeName,
     handle: resolved?.handle || toHandle(safeName),
     bio: resolved?.bio || works[0]?.tags?.join(" · ") || "热爱创作与互动剧情",
-    isFollowedByMe: Boolean(resolved?.followedByMe),
+    isFollowedByMe: hasResolvedFollowFlag ? Boolean(resolved?.followedByMe) : isFollowedFromRelation,
     stats: {
-      fans: formatMetricCount(stats.fansCount || 0),
-      follows: formatMetricCount(stats.followsCount || 0),
-      works: formatMetricCount(stats.worksCount ?? works.length)
+      fans: String(
+        stats.fansCount != null || stats.fans != null
+          ? formatMetricCount(stats.fansCount ?? stats.fans ?? 0)
+          : relationFans
+      ),
+      follows: formatMetricCount(followsFromStats),
+      works: formatMetricCount(worksFromStats)
     },
     likes: [],
     favorites: []
@@ -2733,6 +2871,7 @@ function openAuthorProfileByName(name = "", preferredAuthorId = "") {
   const preferredId = String(preferredAuthorId || "").trim();
   const resolvedAuthorId = (isUuid(preferredId) ? preferredId : "")
     || resolveAuthorIdByName(resolved)
+    || resolveRelationUserIdByName(resolved)
     || resolveAuthUserIdByAlias(resolved);
   uiState.meViewedUserId = resolvedAuthorId;
   uiState.meViewedUserName = resolved;
@@ -4080,7 +4219,7 @@ function resolveAuthorIdByName(name = "") {
     const candidateHandle = normalizeUserName(x?.handle || "");
     return candidateName === needle || candidateHandle === needle;
   });
-  const id = String(hit?.id || "").trim();
+  const id = String(hit?.id || resolveRelationUserIdByName(name) || "").trim();
   return isUuid(id) ? id : "";
 }
 
@@ -4132,17 +4271,24 @@ async function resolveAuthorIdForAction({ userId = "", name = "", handle = "" } 
 
   const localId = resolveAuthorIdByName(name)
     || resolveAuthorIdByName(handle)
+    || resolveRelationUserIdByName(name)
+    || resolveRelationUserIdByName(handle)
     || resolveAuthUserIdByAlias(name)
     || resolveAuthUserIdByAlias(handle);
   if (localId) return localId;
 
   try {
-    await ensureAuthUserAliasIndex();
+    await Promise.race([
+      ensureAuthUserAliasIndex(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("ALIAS_INDEX_TIMEOUT")), 320))
+    ]);
   } catch {
     return "";
   }
   return resolveAuthorIdByName(name)
     || resolveAuthorIdByName(handle)
+    || resolveRelationUserIdByName(name)
+    || resolveRelationUserIdByName(handle)
     || resolveAuthUserIdByAlias(name)
     || resolveAuthUserIdByAlias(handle)
     || "";
@@ -5794,6 +5940,38 @@ function applySentThreadMessage(activeId, message, fallbackPreviewText = "") {
   });
 }
 
+function appendPendingImageMessage(activeId, localUrl, fileName = "image") {
+  const messages = ensureMessageThread(activeId);
+  const tempId = `tmp_img_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  messages.push({
+    id: tempId,
+    from: "me",
+    type: "image",
+    text: "[图片]",
+    payload: {
+      url: String(localUrl || ""),
+      name: String(fileName || "image")
+    },
+    time: "刚刚",
+    read: false,
+    pending: true
+  });
+  updateMessageInboxPreview(activeId, "[图片]");
+  markMessageRead(activeId);
+  render();
+  requestAnimationFrame(() => {
+    const wrap = document.querySelector(".dm-modern-messages");
+    if (wrap) wrap.scrollTop = wrap.scrollHeight;
+  });
+  return tempId;
+}
+
+function removePendingMessage(activeId, tempId) {
+  const messages = ensureMessageThread(activeId);
+  const idx = messages.findIndex((m) => String(m?.id || "") === String(tempId || ""));
+  if (idx >= 0) messages.splice(idx, 1);
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -5806,19 +5984,29 @@ function fileToDataUrl(file) {
   });
 }
 
+function dataUrlByteSize(dataUrl) {
+  const raw = String(dataUrl || "");
+  const comma = raw.indexOf(",");
+  if (comma < 0) return 0;
+  const b64 = raw.slice(comma + 1);
+  const padding = b64.endsWith("==") ? 2 : (b64.endsWith("=") ? 1 : 0);
+  return Math.max(0, Math.floor((b64.length * 3) / 4) - padding);
+}
+
 async function compressImageFileToDataUrl(file, {
-  maxSide = 1680,
-  jpegQuality = 0.84,
-  pngKeepThresholdBytes = 2_500_000
+  maxSide = 1280,
+  jpegQuality = 0.74,
+  minJpegQuality = 0.42,
+  maxOutputBytes = 2_600_000
 } = {}) {
   const rawUrl = await fileToDataUrl(file);
+  if (dataUrlByteSize(rawUrl) <= maxOutputBytes) return rawUrl;
   const img = await new Promise((resolve, reject) => {
     const node = new Image();
     node.onload = () => resolve(node);
     node.onerror = () => reject(new Error("IMAGE_DECODE_FAILED"));
     node.src = rawUrl;
   });
-  const originalBytes = Number(file?.size || 0);
   const width = Number(img.width || 0);
   const height = Number(img.height || 0);
   if (!width || !height) return rawUrl;
@@ -5830,12 +6018,30 @@ async function compressImageFileToDataUrl(file, {
   canvas.height = targetH;
   const ctx = canvas.getContext("2d");
   if (!ctx) return rawUrl;
-  ctx.drawImage(img, 0, 0, targetW, targetH);
-  const mime = originalBytes > pngKeepThresholdBytes ? "image/jpeg" : (String(file.type || "").toLowerCase().includes("png") ? "image/png" : "image/jpeg");
-  const quality = mime === "image/png" ? undefined : jpegQuality;
-  const compressed = canvas.toDataURL(mime, quality);
-  if (!compressed || compressed.length >= rawUrl.length) return rawUrl;
-  return compressed;
+  let attemptSide = Math.max(640, Math.max(targetW, targetH));
+  let attemptQuality = jpegQuality;
+  let best = rawUrl;
+  while (attemptSide >= 640) {
+    const ratio = attemptSide / Math.max(width, height);
+    const drawW = Math.max(1, Math.round(width * Math.min(1, ratio)));
+    const drawH = Math.max(1, Math.round(height * Math.min(1, ratio)));
+    canvas.width = drawW;
+    canvas.height = drawH;
+    ctx.clearRect(0, 0, drawW, drawH);
+    ctx.drawImage(img, 0, 0, drawW, drawH);
+    let q = attemptQuality;
+    while (q >= minJpegQuality) {
+      const candidate = canvas.toDataURL("image/jpeg", q);
+      if (candidate && candidate.length < best.length) best = candidate;
+      if (dataUrlByteSize(candidate) <= maxOutputBytes) return candidate;
+      q = Math.max(minJpegQuality, Number((q - 0.08).toFixed(2)));
+      if (q === minJpegQuality) break;
+    }
+    attemptSide = Math.round(attemptSide * 0.82);
+    attemptQuality = Math.max(minJpegQuality, Number((attemptQuality - 0.06).toFixed(2)));
+  }
+  if (dataUrlByteSize(best) <= maxOutputBytes) return best;
+  throw new Error("图片过大，请换一张或先压缩后再发");
 }
 
 async function loginWithAccountAndSync() {
@@ -6235,7 +6441,7 @@ function buildThreadMessagesHtml(activeId, chatMeta, myAvatarText) {
                 ${renderThreadMessageBubble(m)}
                 ${
                   m.from === "me" && !messages.slice(idx + 1).some((x) => x.from === "me")
-                    ? `<div class="dm-read-flag">${m.read ? "已读" : "送达"}</div>`
+                    ? `<div class="dm-read-flag">${m.pending ? "发送中..." : (m.read ? "已读" : "送达")}</div>`
                     : ""
                 }
               </div>
@@ -7757,6 +7963,9 @@ function pageCommunityCreate() {
 function pageCommunityGroup() {
   const c = getSelectedCommunity();
   if (!c) return pageCommunity();
+  if (uiState.communityGroupTab === "members") {
+    void fetchCommunityMembersAndSync(c.id);
+  }
   const posts = getCommunityPosts(c.id);
   const previewMembers = getCommunityMemberPreviewList(c);
   const displayMemberCount = Math.max(0, toMetricCount(c.memberCount || 0));
@@ -7806,9 +8015,11 @@ function pageCommunityGroup() {
         uiState.communityGroupTab === "members"
           ? `
         <div class="community-member-list">
+          ${uiState.communityMembersLoadingByCommunityId[c.id] ? `<p class="community-empty">成员加载中...</p>` : ""}
+          ${uiState.communityMembersErrorByCommunityId[c.id] ? `<p class="community-empty">${escapeHtml(uiState.communityMembersErrorByCommunityId[c.id])}</p>` : ""}
           ${previewMembers.map((m) => `
             <article class="community-member-item">
-              <span class="avatar user-avatar-click" style="background:${m.color}">${m.name.slice(0,1)}</span>
+              <span class="avatar user-avatar-click" style="${m.avatarUrl ? `background-image:url('${escapeHtml(m.avatarUrl)}');background-size:cover;background-position:center;color:transparent;` : `background:${m.color};`}">${m.name.slice(0,1)}</span>
               <div><h4>${m.name} · ${m.role}</h4><p>${m.intro}</p></div>
             </article>
           `).join("")}
@@ -8894,6 +9105,7 @@ function pageMe() {
   const fansCount = viewingOther ? toMetricCount(viewedProfile?.stats?.fans || 0) : uiState.meStats.fansCount;
   const coinCount = viewingOther ? 0 : (uiState.userCoins || 0);
   const avatarText = getAvatarText(displayedName);
+  const displayedAvatarUrl = viewingOther ? "" : String(uiState.profile?.avatarUrl || "").trim();
   const coverClass = uiState.meHeroCover ? "me-hero me-hero-cover" : "me-hero";
   const coverStyle = uiState.meHeroCover ? `style='--me-hero-cover:${uiState.meHeroCover};'` : "";
   if (!viewingOther) ensurePublishedCreatorWorksInFeedData(publishedCreatorWorks, displayedName);
@@ -8945,12 +9157,13 @@ function pageMe() {
         </div>
         <div class="me-hero-top">
           <button
-            class="me-avatar"
+            class="me-avatar ${displayedAvatarUrl ? "with-image" : ""}"
             data-action="open-profile-avatar-preview"
             data-avatar-name="${escapeHtml(displayedName)}"
             data-avatar-handle="${escapeHtml(displayedHandle)}"
             data-avatar-text="${escapeHtml(avatarText)}"
-          >${avatarText}</button>
+            data-avatar-url="${escapeHtml(displayedAvatarUrl)}"
+          >${displayedAvatarUrl ? `<img src="${escapeHtml(displayedAvatarUrl)}" alt="${escapeHtml(displayedName)}" />` : avatarText}</button>
           <div class="me-meta">
             <h2>${escapeHtml(displayedName)}</h2>
             <p>${escapeHtml(displayedHandle)}</p>
@@ -10378,8 +10591,21 @@ document.addEventListener("click", (event) => {
       if (input instanceof HTMLInputElement) input.click();
       return;
     }
+    if (action === "profile-avatar-upload") {
+      const input = document.querySelector("[data-field='profile-avatar-file']");
+      if (input instanceof HTMLInputElement) input.click();
+      return;
+    }
+    if (action === "profile-avatar-reset") {
+      uiState.profileDraft.avatarUrl = "";
+      render();
+      return;
+    }
     if (action === "me-hero-cover-reset") {
       uiState.meHeroCover = "";
+      if (uiState.showProfileEditModal) {
+        uiState.profileDraft.coverUrl = "";
+      }
       uiState.meFeedback = "已恢复默认背景";
       render();
       return;
@@ -10405,13 +10631,7 @@ document.addEventListener("click", (event) => {
       }
       const prevFollow = Boolean(uiState.meRelationFollowing[targetUserId]);
       const nextFollow = !prevFollow;
-      uiState.meRelationFollowing[targetUserId] = nextFollow;
-      ME_RELATION_USERS.forEach((item) => {
-        if (String(item?.id || "").trim() !== targetUserId) return;
-        item.isFollowing = nextFollow;
-        const isFan = Boolean(item.isFan || item.tab === "粉丝" || item.tab === "朋友");
-        item.tab = nextFollow ? (isFan ? "朋友" : "关注") : (isFan ? "粉丝" : "");
-      });
+      syncRelationStateLocal(targetUserId, nextFollow, { id: targetUserId, name: targetName });
       queuePendingFollowOp(targetUserId, nextFollow);
       persistFollowState(targetUserId, nextFollow);
       if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = nextFollow;
@@ -10422,9 +10642,18 @@ document.addEventListener("click", (event) => {
           const followedByMe = Boolean(relation?.followedByMe);
           clearPendingFollowOp(targetUserId);
           persistFollowState(targetUserId, followedByMe);
-          uiState.meRelationFollowing[targetUserId] = followedByMe;
+          syncRelationStateLocal(targetUserId, followedByMe, { id: targetUserId, name: targetName });
           if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = followedByMe;
-          return bootstrapClientDataFull(uiState.currentUserId);
+          return bootstrapClientData(uiState.currentUserId)
+            .catch(() => {})
+            .then(() => {
+              void bootstrapClientDataFull(uiState.currentUserId)
+                .then(() => {
+                  uiState.bootstrapFullLoaded = true;
+                  render();
+                })
+                .catch(() => {});
+            });
         })
         .then(() => {
           uiState.bootstrapFullLoaded = true;
@@ -10434,7 +10663,7 @@ document.addEventListener("click", (event) => {
           const msg = error instanceof Error ? error.message : "";
           if (msg && msg !== "NETWORK_UNREACHABLE") clearPendingFollowOp(targetUserId);
           persistFollowState(targetUserId, prevFollow);
-          uiState.meRelationFollowing[targetUserId] = prevFollow;
+          syncRelationStateLocal(targetUserId, prevFollow, { id: targetUserId, name: targetName });
           if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = prevFollow;
           uiState.meFeedback = `关注失败：${error instanceof Error ? error.message : "unknown"}`;
           render();
@@ -11135,6 +11364,9 @@ document.addEventListener("click", (event) => {
       const id = actionTarget.getAttribute("data-id");
       if (id) uiState.selectedCommunityId = id;
       uiState.communityGroupFeedback = "";
+      if (uiState.communityGroupTab === "members" && id) {
+        void fetchCommunityMembersAndSync(id);
+      }
       window.location.hash = "#/community/group";
       return;
     }
@@ -11150,6 +11382,10 @@ document.addEventListener("click", (event) => {
       const tab = actionTarget.getAttribute("data-tab");
       if (tab === "dynamic" || tab === "featured" || tab === "members") {
         uiState.communityGroupTab = tab;
+        if (tab === "members") {
+          const c = getSelectedCommunity();
+          if (c?.id) void fetchCommunityMembersAndSync(c.id);
+        }
         render();
       }
       return;
@@ -12431,6 +12667,7 @@ document.addEventListener("click", (event) => {
         const nextFollow = !Boolean(uiState.modalProfile?.isFollowedByMe);
         queuePendingFollowOp(targetUserId, nextFollow);
         persistFollowState(targetUserId, nextFollow);
+        syncRelationStateLocal(targetUserId, nextFollow, uiState.modalProfile || { id: targetUserId, name: targetName, handle: targetHandle });
         if (uiState.modalProfile) uiState.modalProfile.isFollowedByMe = nextFollow;
         if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = nextFollow;
         uiState.isFollowingAuthor = nextFollow;
@@ -12441,6 +12678,7 @@ document.addEventListener("click", (event) => {
             const followedByMe = Boolean(relation?.followedByMe);
             clearPendingFollowOp(targetUserId);
             persistFollowState(targetUserId, followedByMe);
+            syncRelationStateLocal(targetUserId, followedByMe, uiState.modalProfile || { id: targetUserId, name: targetName, handle: targetHandle });
             if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = followedByMe;
             if (AUTHOR_DIRECTORY[targetUserId]) {
               AUTHOR_DIRECTORY[targetUserId].followedByMe = followedByMe;
@@ -12457,7 +12695,16 @@ document.addEventListener("click", (event) => {
             }
             uiState.isFollowingAuthor = followedByMe;
             uiState.authorFeedback = "";
-            return bootstrapClientDataFull(uiState.currentUserId);
+            return bootstrapClientData(uiState.currentUserId)
+              .catch(() => {})
+              .then(() => {
+                void bootstrapClientDataFull(uiState.currentUserId)
+                  .then(() => {
+                    uiState.bootstrapFullLoaded = true;
+                    render();
+                  })
+                  .catch(() => {});
+              });
           })
           .then(() => {
             render();
@@ -12466,6 +12713,7 @@ document.addEventListener("click", (event) => {
             const msg = error instanceof Error ? error.message : "";
             if (msg && msg !== "NETWORK_UNREACHABLE") clearPendingFollowOp(targetUserId);
             persistFollowState(targetUserId, !nextFollow);
+            syncRelationStateLocal(targetUserId, !nextFollow, uiState.modalProfile || { id: targetUserId, name: targetName, handle: targetHandle });
             if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = !nextFollow;
             if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = !nextFollow;
             uiState.isFollowingAuthor = !nextFollow;
@@ -12511,6 +12759,7 @@ document.addEventListener("click", (event) => {
       const nextFollow = !nowFollowed;
       queuePendingFollowOp(targetUserId, nextFollow);
       persistFollowState(targetUserId, nextFollow);
+      syncRelationStateLocal(targetUserId, nextFollow, uiState.modalProfile || { id: targetUserId, name: targetUserName });
       if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = nextFollow;
       if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = nextFollow;
       uiState.authorFeedback = "";
@@ -12520,6 +12769,7 @@ document.addEventListener("click", (event) => {
           const followedByMe = Boolean(relation?.followedByMe);
           clearPendingFollowOp(targetUserId);
           persistFollowState(targetUserId, followedByMe);
+          syncRelationStateLocal(targetUserId, followedByMe, uiState.modalProfile || { id: targetUserId, name: targetUserName });
           if (AUTHOR_DIRECTORY[targetUserId]) {
             AUTHOR_DIRECTORY[targetUserId].followedByMe = followedByMe;
             if (relation?.targetStats) {
@@ -12532,7 +12782,16 @@ document.addEventListener("click", (event) => {
           }
           if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = followedByMe;
           uiState.authorFeedback = "";
-          return bootstrapClientDataFull(uiState.currentUserId);
+          return bootstrapClientData(uiState.currentUserId)
+            .catch(() => {})
+            .then(() => {
+              void bootstrapClientDataFull(uiState.currentUserId)
+                .then(() => {
+                  uiState.bootstrapFullLoaded = true;
+                  render();
+                })
+                .catch(() => {});
+            });
         })
         .then(() => {
           render();
@@ -12541,6 +12800,7 @@ document.addEventListener("click", (event) => {
           const msg = error instanceof Error ? error.message : "";
           if (msg && msg !== "NETWORK_UNREACHABLE") clearPendingFollowOp(targetUserId);
           persistFollowState(targetUserId, nowFollowed);
+          syncRelationStateLocal(targetUserId, nowFollowed, uiState.modalProfile || { id: targetUserId, name: targetUserName });
           if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = nowFollowed;
           if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = nowFollowed;
           uiState.authorFeedback = `操作失败：${error instanceof Error ? error.message : "unknown"}`;
@@ -12645,7 +12905,11 @@ document.addEventListener("click", (event) => {
         render();
         return;
       }
-      uiState.profileDraft = { ...uiState.profile };
+      uiState.profileDraft = {
+        ...uiState.profile,
+        coverUrl: uiState.profile?.coverUrl || extractRawUrlFromCssUrl(uiState.meHeroCover || "")
+      };
+      uiState.profileSaving = false;
       uiState.showProfileEditModal = true;
       render();
       return;
@@ -12657,7 +12921,8 @@ document.addEventListener("click", (event) => {
       uiState.profileAvatarPreview = {
         name: avatarName,
         handle: avatarHandle,
-        avatarText: avatarText || getAvatarText(avatarName)
+        avatarText: avatarText || getAvatarText(avatarName),
+        avatarUrl: String(actionTarget.getAttribute("data-avatar-url") || uiState.profile?.avatarUrl || "").trim()
       };
       uiState.showProfileAvatarPreview = true;
       render();
@@ -12671,13 +12936,48 @@ document.addEventListener("click", (event) => {
     if (action === "close-profile-edit-modal") {
       uiState.showProfileEditModal = false;
       uiState.profileDraft = { ...uiState.profile };
+      uiState.profileSaving = false;
       render();
       return;
     }
     if (action === "save-profile-edit-modal") {
-      uiState.profile = { ...uiState.profileDraft };
-      uiState.showProfileEditModal = false;
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      const name = String(uiState.profileDraft.name || "").trim();
+      if (!name) {
+        uiState.meFeedback = "昵称不能为空";
+        render();
+        return;
+      }
+      if (uiState.profileSaving) return;
+      uiState.profileSaving = true;
+      uiState.meFeedback = "";
       render();
+      void apiJson("/auth/profile", {
+        userId: uiState.currentUserId,
+        name,
+        handle: String(uiState.profileDraft.handle || "").trim(),
+        bio: String(uiState.profileDraft.bio || "").trim(),
+        avatarUrl: String(uiState.profileDraft.avatarUrl || "").trim(),
+        gender: String(uiState.profileDraft.gender || "保密").trim(),
+        birthday: String(uiState.profileDraft.birthday || "").trim(),
+        coverUrl: String(uiState.profileDraft.coverUrl || extractRawUrlFromCssUrl(uiState.meHeroCover || "") || "").trim()
+      })
+        .then(() => bootstrapClientDataFull(uiState.currentUserId))
+        .then(() => {
+          uiState.showProfileEditModal = false;
+          uiState.meFeedback = "资料已保存";
+        })
+        .catch((error) => {
+          uiState.meFeedback = `保存失败：${error instanceof Error ? error.message : "unknown"}`;
+        })
+        .finally(() => {
+          uiState.profileSaving = false;
+          render();
+        });
       return;
     }
     if (action === "user-modal-tab") {
@@ -12839,7 +13139,7 @@ document.addEventListener("input", (event) => {
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
     if (target.classList.contains("profile-edit-input")) {
       const field = target.getAttribute("data-field");
-      if (field === "name" || field === "handle" || field === "bio") {
+      if (field === "name" || field === "handle" || field === "bio" || field === "birthday") {
         uiState.profileDraft[field] = target.value;
       }
       return;
@@ -13056,6 +13356,10 @@ document.addEventListener("change", (event) => {
     uiState.communityComposeStoryId = target.value;
     return;
   }
+  if (target instanceof HTMLSelectElement && target.getAttribute("data-field") === "gender") {
+    uiState.profileDraft.gender = target.value;
+    return;
+  }
   if (target instanceof HTMLSelectElement && target.getAttribute("data-field") === "community-compose-visibility") {
     uiState.communityComposeVisibility = normalizeComposeVisibility(target.value);
     return;
@@ -13117,6 +13421,8 @@ document.addEventListener("change", (event) => {
     if (!activeId) return;
     uiState.messageEmojiPanelOpen = false;
     render();
+    const localPreviewUrl = URL.createObjectURL(file);
+    const pendingId = appendPendingImageMessage(activeId, localPreviewUrl, file.name || "image");
     void compressImageFileToDataUrl(file)
       .then((imageUrl) => {
         if (!imageUrl) throw new Error("IMAGE_ENCODE_FAILED");
@@ -13129,14 +13435,24 @@ document.addEventListener("change", (event) => {
         });
       })
       .then((message) => {
+        removePendingMessage(activeId, pendingId);
+        URL.revokeObjectURL(localPreviewUrl);
         applySentThreadMessage(activeId, message, "[图片]");
       })
       .catch((err) => {
+        removePendingMessage(activeId, pendingId);
+        URL.revokeObjectURL(localPreviewUrl);
         showMessageFeedback(`发送失败：${err instanceof Error ? err.message : "unknown"}`);
+        render();
       });
     return;
   }
-  if (field !== "community-create-cover-file" && field !== "community-create-avatar-file" && field !== "me-hero-cover-file") return;
+  if (
+    field !== "community-create-cover-file"
+    && field !== "community-create-avatar-file"
+    && field !== "me-hero-cover-file"
+    && field !== "profile-avatar-file"
+  ) return;
   const file = target.files?.[0];
   if (!file || !file.type.startsWith("image/")) return;
   const reader = new FileReader();
@@ -13146,9 +13462,14 @@ document.addEventListener("change", (event) => {
         uiState.communityCreateCover = `url("${reader.result}")`;
       } else if (field === "community-create-avatar-file") {
         uiState.communityCreateAvatar = reader.result;
-      } else {
+      } else if (field === "me-hero-cover-file") {
         uiState.meHeroCover = `url(${reader.result})`;
+        if (uiState.showProfileEditModal) {
+          uiState.profileDraft.coverUrl = reader.result;
+        }
         uiState.meFeedback = "背景已更新";
+      } else {
+        uiState.profileDraft.avatarUrl = reader.result;
       }
       if (field === "community-create-cover-file" || field === "community-create-avatar-file") {
         uiState.communityCreateError = "";

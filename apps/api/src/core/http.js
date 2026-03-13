@@ -11,8 +11,8 @@ export function json(res, statusCode, data) {
 }
 
 export function parseBody(req) {
-  const maxBodyBytesRaw = Number.parseInt(String(process.env.MAX_BODY_BYTES || "20971520"), 10);
-  const maxBodyBytes = Number.isFinite(maxBodyBytesRaw) && maxBodyBytesRaw > 0 ? maxBodyBytesRaw : 20 * 1024 * 1024;
+  const maxBodyBytesRaw = Number.parseInt(String(process.env.MAX_BODY_BYTES || "52428800"), 10);
+  const maxBodyBytes = Number.isFinite(maxBodyBytesRaw) && maxBodyBytesRaw > 0 ? maxBodyBytesRaw : 50 * 1024 * 1024;
   return new Promise((resolve, reject) => {
     let body = "";
     let done = false;
