@@ -537,6 +537,8 @@ const uiState = {
   workshopPaintCategory: "all",
   workshopPaintSort: "latest",
   workshopPaintComposerOpen: false,
+  meDraftActionOpen: false,
+  meDraftActionCardId: "",
   playRound: 1,
   playChapter: getWorldProfile(FEED_DATA[0]).chapter,
   worldCommentDraftByCard: {},
@@ -6375,6 +6377,12 @@ function getWorkshopModeLabel(mode = "long_narrative") {
   return WORKSHOP_MODE_META[mode]?.label || mode;
 }
 
+function getWorkshopEditorRouteByMode(mode = "long_narrative") {
+  if (mode === "short_narrative") return "#/workshop/story/editor";
+  if (mode === "virtual_character") return "#/workshop/character/editor";
+  return "#/workshop/world/editor";
+}
+
 function getWorkshopPaintSizeByRatio(ratio = "1:1") {
   if (ratio === "16:9") return { width: 1280, height: 720 };
   if (ratio === "9:16") return { width: 720, height: 1280 };
@@ -8251,7 +8259,7 @@ function pageMe() {
               ? draftTabCards
                   .map(
                     (x) => `
-              <article class="home-card me-home-card creator-work-card" data-action="noop">
+              <article class="home-card me-home-card creator-work-card" data-action="me-draft-open-action" data-id="${escapeHtml(String(x.id || ""))}">
                 <div class="home-cover creator-cover mode-${x.mode}">
                   <div class="creator-draft-mask"><span>草稿箱</span></div>
                 </div>
@@ -8377,6 +8385,29 @@ function pageMe() {
             </div>
           </div>
         </aside>
+        ${
+          uiState.meDraftActionOpen
+            ? (() => {
+                const activeId = String(uiState.meDraftActionCardId || "");
+                const activeCard = uiState.workshopSavedCards.find((item) => String(item.id || "") === activeId);
+                const title = activeCard?.title || "该草稿";
+                return `
+                  <div class="workshop-flow-overlay" data-action="me-draft-close-action">
+                    <div class="workshop-flow-modal" data-action="noop">
+                      <button class="workshop-flow-close" data-action="me-draft-close-action">×</button>
+                      <h3>草稿操作</h3>
+                      <p>《${escapeHtml(title)}》已保存在草稿箱。是否现在发布？</p>
+                      <div class="workshop-flow-actions">
+                        <button class="ghost" data-action="me-draft-close-action">暂不发布</button>
+                        <button data-action="me-draft-edit">继续编辑</button>
+                        <button class="primary" data-action="me-draft-publish-now">${uiState.workshopPublishing ? "发布中..." : "立即发布"}</button>
+                      </div>
+                    </div>
+                  </div>
+                `;
+              })()
+            : ""
+        }
       `
       }
     </section>
@@ -9480,6 +9511,71 @@ document.addEventListener("click", (event) => {
       uiState.meContentTab = "drafts";
       uiState.meFeedback = "";
       render();
+      return;
+    }
+    if (action === "me-draft-open-action") {
+      const id = String(actionTarget.getAttribute("data-id") || "").trim();
+      if (!id) return;
+      const card = uiState.workshopSavedCards.find((item) => String(item.id || "") === id);
+      if (card) {
+        uiState.workshopPendingCardId = card.id;
+        seedWorkshopPublishDraft(card);
+      }
+      uiState.meDraftActionCardId = id;
+      uiState.meDraftActionOpen = true;
+      render();
+      return;
+    }
+    if (action === "me-draft-close-action") {
+      uiState.meDraftActionOpen = false;
+      uiState.meDraftActionCardId = "";
+      render();
+      return;
+    }
+    if (action === "me-draft-edit") {
+      const id = String(uiState.meDraftActionCardId || "").trim();
+      const card = uiState.workshopSavedCards.find((item) => String(item.id || "") === id);
+      if (!card) {
+        uiState.meDraftActionOpen = false;
+        uiState.meDraftActionCardId = "";
+        uiState.meFeedback = "该草稿来自历史占位数据，暂不支持编辑";
+        render();
+        return;
+      }
+      uiState.workshopActiveCardId = card.id;
+      uiState.workshopMode = card.mode;
+      uiState.workshopCustomParsed = null;
+      hydrateWorkshopDraft(card.mode, card.draft && typeof card.draft === "object" ? card.draft : {});
+      uiState.workshopAuthoringMode = WORKSHOP_FORCE_CUSTOM_MODES.has(card.mode)
+        ? "custom"
+        : String(card.authoringMode || "template");
+      uiState.workshopPendingCardId = card.id;
+      seedWorkshopPublishDraft(card);
+      uiState.meDraftActionOpen = false;
+      uiState.meDraftActionCardId = "";
+      window.location.hash = getWorkshopEditorRouteByMode(card.mode);
+      return;
+    }
+    if (action === "me-draft-publish-now") {
+      if (uiState.workshopPublishing) return;
+      const id = String(uiState.meDraftActionCardId || "").trim();
+      const card = uiState.workshopSavedCards.find((item) => String(item.id || "") === id);
+      if (!card) {
+        uiState.meDraftActionOpen = false;
+        uiState.meDraftActionCardId = "";
+        uiState.meFeedback = "该草稿来自历史占位数据，暂不支持直接发布";
+        render();
+        return;
+      }
+      uiState.workshopPendingCardId = card.id;
+      seedWorkshopPublishDraft(card);
+      void publishWorkshopCardToApi(card.id).then((ok) => {
+        if (!ok) return;
+        uiState.meDraftActionOpen = false;
+        uiState.meDraftActionCardId = "";
+        uiState.meContentTab = "works";
+        render();
+      });
       return;
     }
     if (action === "me-stat-feedback") {
