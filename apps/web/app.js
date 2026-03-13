@@ -44,6 +44,9 @@ const COIN_BILLS = [];
 const COIN_TASKS = [];
 const COIN_BENEFITS = [];
 const AUTHOR_DIRECTORY = {};
+const AUTH_USER_ALIAS_INDEX = Object.create(null);
+let AUTH_USER_ALIAS_INDEX_AT = 0;
+const AUTH_USER_ALIAS_INDEX_TTL_MS = 5 * 60 * 1000;
 let DRAMA_HERO_TOTAL = 1;
 const API_BASE = "/api/v1";
 const BOOTSTRAP_CORE_CACHE_KEY = "drama_bootstrap_core_v6";
@@ -3872,6 +3875,85 @@ function resolveAuthorIdByName(name = "") {
   return isUuid(id) ? id : "";
 }
 
+function upsertAuthUserAliasEntry(user = {}) {
+  const id = String(user?.id || "").trim();
+  if (!isUuid(id)) return;
+  const aliases = [
+    user?.nickname,
+    user?.name,
+    user?.handle,
+    user?.email
+  ]
+    .map((x) => normalizeUserName(x))
+    .filter(Boolean);
+  aliases.forEach((alias) => {
+    AUTH_USER_ALIAS_INDEX[alias] = id;
+  });
+}
+
+function resolveAuthUserIdByAlias(value = "") {
+  const key = normalizeUserName(value);
+  if (!key) return "";
+  const id = String(AUTH_USER_ALIAS_INDEX[key] || "").trim();
+  return isUuid(id) ? id : "";
+}
+
+async function ensureAuthUserAliasIndex(force = false) {
+  const now = Date.now();
+  if (
+    !force
+    && AUTH_USER_ALIAS_INDEX_AT > 0
+    && (now - AUTH_USER_ALIAS_INDEX_AT) < AUTH_USER_ALIAS_INDEX_TTL_MS
+    && Object.keys(AUTH_USER_ALIAS_INDEX).length > 0
+  ) {
+    return;
+  }
+  const data = await apiGetJson("/auth/users");
+  const users = Array.isArray(data?.users) ? data.users : [];
+  Object.keys(AUTH_USER_ALIAS_INDEX).forEach((key) => {
+    delete AUTH_USER_ALIAS_INDEX[key];
+  });
+  users.forEach((user) => upsertAuthUserAliasEntry(user));
+  AUTH_USER_ALIAS_INDEX_AT = Date.now();
+}
+
+async function resolveAuthorIdForAction({ userId = "", name = "", handle = "" } = {}) {
+  const explicitId = String(userId || "").trim();
+  if (isUuid(explicitId)) return explicitId;
+
+  const localId = resolveAuthorIdByName(name)
+    || resolveAuthorIdByName(handle)
+    || resolveAuthUserIdByAlias(name)
+    || resolveAuthUserIdByAlias(handle);
+  if (localId) return localId;
+
+  try {
+    await ensureAuthUserAliasIndex();
+  } catch {
+    return "";
+  }
+  return resolveAuthorIdByName(name)
+    || resolveAuthorIdByName(handle)
+    || resolveAuthUserIdByAlias(name)
+    || resolveAuthUserIdByAlias(handle)
+    || "";
+}
+
+function resolveUserIdFromNode(node) {
+  if (!node) return "";
+  const ownUserId = String(node.getAttribute?.("data-user-id") || "").trim();
+  if (isUuid(ownUserId)) return ownUserId;
+  const ownId = String(node.getAttribute?.("data-id") || "").trim();
+  if (isUuid(ownId)) return ownId;
+  const article = node.closest?.("article, .msg-thread-item, .dynamic-card, .dynamic-detail-card, .community-post-card, .community-post-detail, .msg-comment-item");
+  if (article) {
+    const articleUserId = String(article.getAttribute?.("data-user-id") || "").trim();
+    if (isUuid(articleUserId)) return articleUserId;
+  }
+  const userName = resolveUserNameFromNode(node);
+  return resolveAuthorIdByName(userName) || resolveAuthUserIdByAlias(userName);
+}
+
 function getActiveConversationId() {
   const selected = String(uiState.selectedMessageId || "").trim();
   if (isUuid(selected)) return selected;
@@ -4578,8 +4660,8 @@ async function publishCommunityPostAndPersist() {
     return;
   }
   const communityId = String(uiState.selectedCommunityId || "").trim();
-  if (!communityId || !isUuid(communityId)) {
-    uiState.communityGroupFeedback = "未选择有效社区，无法发布";
+  if (!communityId) {
+    uiState.communityGroupFeedback = "未选择社区，无法发布";
     render();
     return;
   }
@@ -4588,6 +4670,34 @@ async function publishCommunityPostAndPersist() {
   uiState.communityGroupFeedback = "";
   render();
   try {
+    if (!isUuid(communityId)) {
+      const localPost = {
+        id: `cp_local_${Date.now()}`,
+        user: String(uiState.profile?.name || "").trim() || "我",
+        time: "刚刚",
+        title: text.slice(0, 28) || "社区动态",
+        text,
+        tag: "动态",
+        likes: 0,
+        stars: 0,
+        comments: 0,
+        featured: false,
+        story: uiState.communityComposeStoryId
+          ? FEED_DATA.find((x) => x.id === uiState.communityComposeStoryId)?.title
+          : undefined,
+        storyId: uiState.communityComposeStoryId || undefined
+      };
+      if (!COMMUNITY_POSTS[communityId]) COMMUNITY_POSTS[communityId] = [];
+      COMMUNITY_POSTS[communityId].unshift(localPost);
+      uiState.selectedCommunityPostId = localPost.id;
+      uiState.communityComposeText = "";
+      uiState.communityComposeStoryId = "";
+      uiState.communityPostPublished = false;
+      uiState.communityGroupFeedback = "发布成功";
+      render();
+      return;
+    }
+
     const data = await apiJson("/community/posts", {
       communityId,
       authorId: uiState.currentUserId,
@@ -7480,7 +7590,7 @@ function pageCommunityPost() {
   const storyOptions = getCommunityStoryOptions();
   return renderExploreShell(`
     <section class="community-page community-form">
-      <div class="community-head-row"><h2>发动态</h2><button data-action="publish-community-post">发布</button></div>
+      <div class="community-head-row"><h2>发动态</h2></div>
       <textarea data-field="community-compose-text" placeholder="分享你的新发现、攻略或招募信息...">${escapeHtml(uiState.communityComposeText)}</textarea>
       <div class="community-chip-row">
         ${["图片", "@成员", "话题"].map((x) => `<button class="${uiState.communityComposeType === x ? "active" : ""}" data-action="community-compose-type" data-type="${x}">${x}</button>`).join("")}
@@ -7497,6 +7607,7 @@ function pageCommunityPost() {
       </div>
       <div class="community-setting-row"><span>可见范围</span><button data-action="community-visibility"> ${uiState.communityComposeVisibility}</button></div>
       <div class="community-setting-row"><span>同步到精华候选</span><button data-action="community-sync-toggle">${uiState.communityComposeSync ? "开启" : "关闭"}</button></div>
+      ${uiState.communityGroupFeedback ? `<div class="msg-action-feedback">${escapeHtml(uiState.communityGroupFeedback)}</div>` : ""}
       <button class="dynamic-publish-btn" data-action="publish-community-post">${uiState.communityPostPublished ? "发布中..." : "发布动态"}</button>
       ${uiState.communityPostPublished ? `<div class="community-inline-success">✔ 发布成功 <button data-go="#/community/post/detail">去查看</button></div>` : ""}
     </section>
