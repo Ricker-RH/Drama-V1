@@ -8115,11 +8115,28 @@ function pageMe() {
   const creatorWorks = buildCreatorWorks();
   const draftCreatorWorks = creatorWorks.filter((x) => x.status !== "published");
   const publishedCreatorWorks = creatorWorks.filter((x) => x.status === "published");
+  const feedWorks = Array.isArray(ME_CONTENT_LIBRARY.works) ? ME_CONTENT_LIBRARY.works : [];
   const feed = ME_CONTENT_LIBRARY[tab] || [];
   const creatorTitleSet = new Set(publishedCreatorWorks.map((x) => x.title));
   const ownFeed = tab === "works"
     ? feed.filter((x) => !creatorTitleSet.has(x.title))
     : feed;
+  const feedDraftFallback = viewingOther
+    ? []
+    : feedWorks.map((x, idx) => ({
+        id: x.id || `feed_draft_${idx + 1}`,
+        mode: "long_narrative",
+        title: x.title || `草稿 ${idx + 1}`,
+        subtitle: x.meta || "创作草稿",
+        summary: x.stat || "",
+        status: "draft"
+      }));
+  const draftCardMap = new Map();
+  [...draftCreatorWorks, ...feedDraftFallback].forEach((item) => {
+    const key = String(item.id || item.title || Math.random());
+    if (!draftCardMap.has(key)) draftCardMap.set(key, item);
+  });
+  const draftTabCards = [...draftCardMap.values()];
 
   const visitorWorks = viewingOther
     ? FEED_DATA
@@ -8241,7 +8258,7 @@ function pageMe() {
         <div class="me-content-grid">
           ${
             tab === "drafts"
-              ? draftCreatorWorks
+              ? draftTabCards
                   .map(
                     (x) => `
               <article class="home-card me-home-card creator-work-card" data-action="noop">
@@ -8327,7 +8344,7 @@ function pageMe() {
           }
           ${
             (
-              (tab === "drafts" && draftCreatorWorks.length === 0)
+              (tab === "drafts" && draftTabCards.length === 0)
               || (tab !== "drafts" && tab !== "works" && uniqueFeed.length === 0)
             )
               ? `<div class="me-content-empty-tip">${tab === "drafts" ? "暂无草稿" : "暂无内容"}</div>`
