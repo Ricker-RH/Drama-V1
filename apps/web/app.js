@@ -23,6 +23,16 @@ const COMMUNITY_FILTER_CONFIG = [
   { key: "time", label: "全部时间", options: ["24小时", "3天", "7天", "30天"] },
   { key: "size", label: "全部人数", options: ["<100", "100-500", "500-1k", ">1k"] }
 ];
+const COMMUNITY_TOPIC_SUGGESTIONS = [
+  "短剧夜行地图",
+  "社交APP",
+  "社区日常",
+  "开荒实录",
+  "角色关系",
+  "互动玩法",
+  "剧情讨论",
+  "周更连载"
+];
 const HOT_SEARCH_TERMS = [];
 const DEFAULT_SEARCH_HISTORY = [];
 const COMMUNITY_CARD_IMAGES = [
@@ -399,7 +409,13 @@ const uiState = {
   selectedCommunityId: "c_1",
   selectedCommunityPostId: "cp_1",
   communityComposeType: "图片",
+  communityComposeTitle: "",
   communityComposeText: "",
+  communityComposeMedia: [],
+  communityComposeMentions: [],
+  communityComposeTopics: [],
+  communityComposeMentionSheetOpen: false,
+  communityComposeTopicSheetOpen: false,
   communityComposeStoryId: "",
   communityComposeVisibility: "公开 · 社区内",
   communityComposeSync: true,
@@ -2352,6 +2368,48 @@ function getCommunityMemberPreviewList(community) {
 
 function getCommunityPosts(cid) {
   return COMMUNITY_POSTS[cid] || [];
+}
+
+function getCommunityMentionCandidates() {
+  if (Array.isArray(COMMUNITY_MEMBERS) && COMMUNITY_MEMBERS.length) {
+    return COMMUNITY_MEMBERS.slice(0, 20).map((m, idx) => ({
+      id: String(m.id || `${idx + 1}`),
+      name: String(m.name || `成员${idx + 1}`).trim() || `成员${idx + 1}`,
+      avatar: String(m.name || "成").trim().slice(0, 1) || "成"
+    }));
+  }
+  return [
+    { id: "u1", name: "Alina", avatar: "A" },
+    { id: "u2", name: "Leon", avatar: "L" },
+    { id: "u3", name: "小北", avatar: "小" },
+    { id: "u4", name: "阿青", avatar: "阿" }
+  ];
+}
+
+function appendTextTokenWithSpace(base, token) {
+  const current = String(base || "");
+  const suffix = current && !/\s$/.test(current) ? " " : "";
+  return `${current}${suffix}${token} `;
+}
+
+function normalizeMediaUrls(mediaLike) {
+  const src = Array.isArray(mediaLike) ? mediaLike : [];
+  return src
+    .map((x) => (typeof x === "string" ? x : x?.url))
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+}
+
+function renderCommunityPostMedia(post = {}, options = {}) {
+  const urls = normalizeMediaUrls(post.mediaUrls || post.media_urls);
+  const limit = Number(options.limit || 0);
+  const picked = limit > 0 ? urls.slice(0, limit) : urls;
+  if (!picked.length) return "";
+  return `
+    <div class="community-post-media">
+      ${picked.map((url) => `<div class="community-post-media-item"><img src="${escapeHtml(url)}" alt="社区动态图片" loading="lazy" /></div>`).join("")}
+    </div>
+  `;
 }
 
 function getSelectedCommunityPost() {
@@ -4636,7 +4694,7 @@ function normalizeCommunityPostFromApi(post = {}) {
   return {
     id: String(post?.id || `cp_${Date.now()}`),
     user: String(post?.author_name || post?.authorName || "").trim() || "匿名",
-    time: formatTimeText(post?.created_at || post?.createdAt || Date.now()),
+    time: formatWorldCommentTime(post?.created_at || post?.createdAt || Date.now()),
     title,
     text,
     tag: Boolean(post?.is_featured || post?.isFeatured) ? "精华" : "动态",
@@ -7572,7 +7630,7 @@ function pageCommunityGroup() {
               <header><span class="avatar user-avatar-click">${p.user.slice(0,1)}</span><div><strong>${p.user}</strong><small>${p.time} · ${c.name}</small></div>${p.featured ? `<em>精华</em>` : ""}</header>
               <h4>${p.title}</h4>
               <p>${p.text}</p>
-              <div class="community-post-media"><div></div><div></div><div></div></div>
+              ${renderCommunityPostMedia(p, { limit: 3 })}
               ${p.story ? `<div class="community-story-link"><span>附加故事卡：${p.story}</span><button data-action="open-world-detail" data-id="${getSafeWorldId(p.storyId, 0)}">查看</button></div>` : ""}
               <footer><span>赞 ${formatCount(p.likes)}</span><span>评 ${formatCount(p.comments)}</span><span>分享 ${formatCount(p.stars)}</span></footer>
             </article>
@@ -7588,14 +7646,44 @@ function pageCommunityGroup() {
 
 function pageCommunityPost() {
   const storyOptions = getCommunityStoryOptions();
+  const mentionCandidates = getCommunityMentionCandidates();
+  const topicCandidates = COMMUNITY_TOPIC_SUGGESTIONS;
+  const media = Array.isArray(uiState.communityComposeMedia) ? uiState.communityComposeMedia : [];
+  const canPublish = media.length > 0
+    && Boolean(String(uiState.communityComposeText || uiState.communityComposeTitle || "").trim())
+    && !uiState.communityPostPublished;
   return renderExploreShell(`
-    <section class="community-page community-form">
-      <div class="community-head-row"><h2>发动态</h2></div>
-      <textarea data-field="community-compose-text" placeholder="分享你的新发现、攻略或招募信息...">${escapeHtml(uiState.communityComposeText)}</textarea>
-      <div class="community-chip-row">
-        ${["图片", "@成员", "话题"].map((x) => `<button class="${uiState.communityComposeType === x ? "active" : ""}" data-action="community-compose-type" data-type="${x}">${x}</button>`).join("")}
+    <section class="community-page community-form community-compose-page">
+      <div class="community-compose-top">
+        <button class="community-compose-back unified-back-btn" data-action="go-back" aria-label="返回">←</button>
+        <h2>发动态</h2>
+        <div></div>
       </div>
-      <div class="community-media-upload"><div></div><div></div><div>+</div></div>
+      <div class="community-compose-media-strip">
+        ${media
+          .map(
+            (m) => `
+          <article class="community-compose-media-card">
+            <img src="${escapeHtml(m.url)}" alt="已选择图片" loading="lazy" />
+            <button data-action="community-compose-remove-media" data-id="${m.id}" aria-label="删除图片">×</button>
+          </article>
+        `
+          )
+          .join("")}
+        ${media.length < 9 ? `<button class="community-compose-media-add" data-action="community-compose-pick-media">＋</button>` : ""}
+      </div>
+      <input class="community-cover-file-input" type="file" accept="image/*" multiple data-field="community-compose-media-file" />
+      <input class="community-compose-title" data-field="community-compose-title" value="${escapeHtml(uiState.communityComposeTitle)}" placeholder="添加标题" />
+      <textarea data-field="community-compose-text" placeholder="分享你的新发现、攻略或招募信息...">${escapeHtml(uiState.communityComposeText)}</textarea>
+      <div class="community-compose-picked-row">
+        ${uiState.communityComposeTopics.map((x) => `<span class="topic">#${escapeHtml(x)}</span>`).join("")}
+        ${uiState.communityComposeMentions.map((x) => `<span class="mention">@${escapeHtml(x)}</span>`).join("")}
+      </div>
+      <div class="community-chip-row community-compose-toolbar">
+        <button data-action="community-compose-pick-media">图片</button>
+        <button data-action="community-compose-open-mentions">@成员</button>
+        <button data-action="community-compose-open-topics">#话题</button>
+      </div>
       <div class="community-setting-row community-story-bind-row">
         <span>绑定故事卡</span>
         <select data-field="community-compose-story">
@@ -7608,8 +7696,49 @@ function pageCommunityPost() {
       <div class="community-setting-row"><span>可见范围</span><button data-action="community-visibility"> ${uiState.communityComposeVisibility}</button></div>
       <div class="community-setting-row"><span>同步到精华候选</span><button data-action="community-sync-toggle">${uiState.communityComposeSync ? "开启" : "关闭"}</button></div>
       ${uiState.communityGroupFeedback ? `<div class="msg-action-feedback">${escapeHtml(uiState.communityGroupFeedback)}</div>` : ""}
-      <button class="dynamic-publish-btn" data-action="publish-community-post">${uiState.communityPostPublished ? "发布中..." : "发布动态"}</button>
+      <div class="community-compose-bottom-bar">
+        <button class="ghost" data-action="community-compose-save-draft">存草稿</button>
+        <button class="dynamic-publish-btn" data-action="publish-community-post" ${canPublish ? "" : "disabled"}>${uiState.communityPostPublished ? "发布中..." : "发布动态"}</button>
+      </div>
       ${uiState.communityPostPublished ? `<div class="community-inline-success">✔ 发布成功 <button data-go="#/community/post/detail">去查看</button></div>` : ""}
+      ${
+        uiState.communityComposeMentionSheetOpen
+          ? `
+        <div class="community-compose-sheet-mask" data-action="community-compose-close-sheet">
+          <div class="community-compose-sheet" data-action="noop">
+            <header><h4>@成员</h4><button data-action="community-compose-close-sheet">完成</button></header>
+            <div class="community-compose-sheet-list">
+              ${mentionCandidates.map((m) => `
+                <button data-action="community-compose-pick-mention" data-name="${escapeHtml(m.name)}">
+                  <span class="avatar">${escapeHtml(m.avatar)}</span>
+                  <em>${escapeHtml(m.name)}</em>
+                </button>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+      `
+          : ""
+      }
+      ${
+        uiState.communityComposeTopicSheetOpen
+          ? `
+        <div class="community-compose-sheet-mask" data-action="community-compose-close-sheet">
+          <div class="community-compose-sheet" data-action="noop">
+            <header><h4>#话题</h4><button data-action="community-compose-close-sheet">完成</button></header>
+            <div class="community-compose-sheet-list">
+              ${topicCandidates.map((topic) => `
+                <button data-action="community-compose-pick-topic" data-topic="${escapeHtml(topic)}">
+                  <span>#</span>
+                  <em>${escapeHtml(topic)}</em>
+                </button>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+      `
+          : ""
+      }
     </section>
   `);
 }
@@ -7624,7 +7753,7 @@ function pageCommunityPostDetail() {
         <header><span class="avatar user-avatar-click">${post.user.slice(0,1)}</span><div><strong>${post.user}</strong><small>${post.time} · ${getSelectedCommunity().name}</small></div></header>
         <h3>${post.title}</h3>
         <p>${post.text}</p>
-        <div class="community-post-media"><div></div><div></div><div></div></div>
+        ${renderCommunityPostMedia(post)}
         ${post.story ? `<div class="community-story-link"><span>附加故事卡：${post.story}</span><button data-action="open-world-detail" data-id="${getSafeWorldId(post.storyId, 0)}">查看</button></div>` : ""}
         <footer class="community-post-toolbar">
           <button class="${meta.liked ? "active" : ""}" data-action="community-post-like">♡ ${formatCount(meta.likes)}</button>
@@ -10825,6 +10954,63 @@ document.addEventListener("click", (event) => {
       }
       return;
     }
+    if (action === "community-compose-pick-media") {
+      const input = document.querySelector("[data-field='community-compose-media-file']");
+      if (input instanceof HTMLInputElement) input.click();
+      return;
+    }
+    if (action === "community-compose-remove-media") {
+      const mediaId = String(actionTarget.getAttribute("data-id") || "").trim();
+      if (!mediaId) return;
+      uiState.communityComposeMedia = (uiState.communityComposeMedia || []).filter((x) => String(x?.id || "") !== mediaId);
+      render();
+      return;
+    }
+    if (action === "community-compose-open-mentions") {
+      uiState.communityComposeMentionSheetOpen = true;
+      uiState.communityComposeTopicSheetOpen = false;
+      render();
+      return;
+    }
+    if (action === "community-compose-open-topics") {
+      uiState.communityComposeTopicSheetOpen = true;
+      uiState.communityComposeMentionSheetOpen = false;
+      render();
+      return;
+    }
+    if (action === "community-compose-close-sheet") {
+      uiState.communityComposeTopicSheetOpen = false;
+      uiState.communityComposeMentionSheetOpen = false;
+      render();
+      return;
+    }
+    if (action === "community-compose-pick-mention") {
+      const name = String(actionTarget.getAttribute("data-name") || "").trim();
+      if (!name) return;
+      if (!uiState.communityComposeMentions.includes(name)) {
+        uiState.communityComposeMentions = [...uiState.communityComposeMentions, name].slice(0, 12);
+      }
+      uiState.communityComposeText = appendTextTokenWithSpace(uiState.communityComposeText, `@${name}`);
+      uiState.communityComposeMentionSheetOpen = false;
+      render();
+      return;
+    }
+    if (action === "community-compose-pick-topic") {
+      const topic = String(actionTarget.getAttribute("data-topic") || "").trim();
+      if (!topic) return;
+      if (!uiState.communityComposeTopics.includes(topic)) {
+        uiState.communityComposeTopics = [...uiState.communityComposeTopics, topic].slice(0, 12);
+      }
+      uiState.communityComposeText = appendTextTokenWithSpace(uiState.communityComposeText, `#${topic}`);
+      uiState.communityComposeTopicSheetOpen = false;
+      render();
+      return;
+    }
+    if (action === "community-compose-save-draft") {
+      uiState.communityGroupFeedback = "草稿已暂存（本地）";
+      render();
+      return;
+    }
     if (action === "community-sync-toggle") {
       uiState.communityComposeSync = !uiState.communityComposeSync;
       render();
@@ -12340,6 +12526,10 @@ document.addEventListener("input", (event) => {
       uiState.communityComposeText = target.value;
       return;
     }
+    if (dynamicField === "community-compose-title") {
+      uiState.communityComposeTitle = target.value;
+      return;
+    }
     if (dynamicField === "community-comment") {
       uiState.communityCommentDraft = target.value;
       return;
@@ -12525,6 +12715,35 @@ document.addEventListener("change", (event) => {
   }
   if (!(target instanceof HTMLInputElement)) return;
   const field = target.getAttribute("data-field");
+  if (field === "community-compose-media-file") {
+    const files = Array.from(target.files || []).filter((f) => f && String(f.type || "").startsWith("image/"));
+    target.value = "";
+    if (!files.length) return;
+    const remain = Math.max(0, 9 - (uiState.communityComposeMedia || []).length);
+    const picked = files.slice(0, remain);
+    if (!picked.length) return;
+    Promise.all(
+      picked.map((file) => new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          resolve(typeof reader.result === "string" ? {
+            id: `${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+            url: reader.result,
+            name: String(file.name || "image").trim() || "image"
+          } : null);
+        };
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(file);
+      }))
+    ).then((items) => {
+      const valid = items.filter(Boolean);
+      if (!valid.length) return;
+      uiState.communityComposeMedia = [...(uiState.communityComposeMedia || []), ...valid].slice(0, 9);
+      uiState.communityGroupFeedback = "";
+      render();
+    });
+    return;
+  }
   if (field === "message-thread-image-file") {
     const file = target.files?.[0];
     target.value = "";
