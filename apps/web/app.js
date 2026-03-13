@@ -8161,6 +8161,9 @@ function pageMe() {
     ["小程序"],
     ["社区公约"]
   ];
+  const meMenuActionMap = {
+    我的草稿: "me-open-drafts-tab"
+  };
   const formatModeTag = (mode = "") => {
     if (mode === "virtual_character") return "虚拟人物";
     if (mode === "short_narrative") return "短叙事";
@@ -8353,7 +8356,10 @@ function pageMe() {
                 ${group
                   .map(
                     (item) => `
-                  <button data-action="me-menu-feedback" data-text="${item}功能待接入">
+                  <button
+                    data-action="${meMenuActionMap[item] || "me-menu-feedback"}"
+                    ${meMenuActionMap[item] ? "" : `data-text="${item}功能待接入"`}
+                  >
                     <span class="me-side-item-icon"></span>
                     <span>${item}</span>
                   </button>
@@ -9464,8 +9470,16 @@ document.addEventListener("click", (event) => {
       const tab = actionTarget.getAttribute("data-tab");
       if (tab && ["drafts", "works", "likes", "favorites", "history"].includes(tab)) {
         uiState.meContentTab = tab;
+        uiState.meFeedback = "";
         render();
       }
+      return;
+    }
+    if (action === "me-open-drafts-tab") {
+      uiState.meMenuOpen = false;
+      uiState.meContentTab = "drafts";
+      uiState.meFeedback = "";
+      render();
       return;
     }
     if (action === "me-stat-feedback") {
