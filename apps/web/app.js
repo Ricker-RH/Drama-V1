@@ -8610,6 +8610,7 @@ function pageMeFollowers() {
     if (tab === "关注") return isFollowing(x) && !isFan(x);
     return isFan(x) && isFollowing(x);
   }).filter((x) => {
+    if (String(x?.id || "").trim() === String(uiState.currentUserId || "").trim()) return false;
     if (!query) return true;
     return `${x.name} ${x.handle} ${x.intro}`.toLowerCase().includes(query);
   });
@@ -8644,7 +8645,7 @@ function pageMeFollowers() {
               <small>${x.intro}</small>
             </div>
             <div class="actions">
-              <button class="msg-follow-btn" data-action="me-follower-follow-toggle" data-id="${x.id}">${uiState.meRelationFollowing[x.id] ? "已关注" : "关注"}</button>
+              <button class="msg-follow-btn" data-action="me-follower-follow-toggle" data-id="${x.id}" data-name="${x.name}">${uiState.meRelationFollowing[x.id] ? "已关注" : "关注"}</button>
               <button class="msg-follow-btn ghost" data-action="me-follower-chat" data-id="${x.id}" data-name="${x.name}">私信</button>
             </div>
           </article>
@@ -9812,13 +9813,76 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "me-follower-follow-toggle") {
-      uiState.meFeedback = "关注能力待接入，当前仅展示真实关系数据";
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      const targetName = String(actionTarget.getAttribute("data-name") || "").trim();
+      const targetUserIdRaw = String(actionTarget.getAttribute("data-id") || "").trim();
+      const targetUserId = targetUserIdRaw || resolveAuthorIdByName(targetName);
+      if (!targetUserId) {
+        uiState.meFeedback = "未找到该用户，暂无法关注";
+        render();
+        return;
+      }
+      if (targetUserId === uiState.currentUserId) {
+        uiState.meFeedback = "不能关注自己";
+        render();
+        return;
+      }
+      const prevFollow = Boolean(uiState.meRelationFollowing[targetUserId]);
+      const nextFollow = !prevFollow;
+      uiState.meRelationFollowing[targetUserId] = nextFollow;
+      ME_RELATION_USERS.forEach((item) => {
+        if (String(item?.id || "").trim() !== targetUserId) return;
+        item.isFollowing = nextFollow;
+        const isFan = Boolean(item.isFan || item.tab === "粉丝" || item.tab === "朋友");
+        item.tab = nextFollow ? (isFan ? "朋友" : "关注") : (isFan ? "粉丝" : "");
+      });
+      queuePendingFollowOp(targetUserId, nextFollow);
+      persistFollowState(targetUserId, nextFollow);
+      if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = nextFollow;
+      uiState.meFeedback = "";
       render();
+      void setUserFollowRelation(targetUserId, nextFollow, { keepalive: true })
+        .then((relation) => {
+          const followedByMe = Boolean(relation?.followedByMe);
+          clearPendingFollowOp(targetUserId);
+          persistFollowState(targetUserId, followedByMe);
+          uiState.meRelationFollowing[targetUserId] = followedByMe;
+          if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = followedByMe;
+          return bootstrapClientDataFull(uiState.currentUserId);
+        })
+        .then(() => {
+          uiState.bootstrapFullLoaded = true;
+          render();
+        })
+        .catch((error) => {
+          const msg = error instanceof Error ? error.message : "";
+          if (msg && msg !== "NETWORK_UNREACHABLE") clearPendingFollowOp(targetUserId);
+          persistFollowState(targetUserId, prevFollow);
+          uiState.meRelationFollowing[targetUserId] = prevFollow;
+          if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = prevFollow;
+          uiState.meFeedback = `关注失败：${error instanceof Error ? error.message : "unknown"}`;
+          render();
+        });
       return;
     }
     if (action === "me-follower-chat") {
       const name = actionTarget.getAttribute("data-name") || "对方";
-      const targetUserId = actionTarget.getAttribute("data-id") || "";
+      const targetUserIdRaw = String(actionTarget.getAttribute("data-id") || "").trim();
+      const targetUserId = targetUserIdRaw || resolveAuthorIdByName(name);
+      if (!targetUserId) {
+        uiState.messageFeedback = "未找到该用户，无法发起私聊";
+        render();
+        return;
+      }
+      if (targetUserId === uiState.currentUserId) {
+        uiState.messageFeedback = "不能给自己发私信";
+        render();
+        return;
+      }
       void openOrCreateDirectThread(targetUserId, name).catch((error) => {
         uiState.messageFeedback = `发私信失败：${error instanceof Error ? error.message : "unknown"}`;
         render();
