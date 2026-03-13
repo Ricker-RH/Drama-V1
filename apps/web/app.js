@@ -622,6 +622,47 @@ function getDefaultWorldCard() {
   };
 }
 
+function upsertFeedDataFromPublishedWorldCard(worldCard = {}) {
+  const id = String(worldCard?.id || "").trim();
+  if (!id) return;
+  const feedItem = {
+    id,
+    format: String(worldCard?.format || "短剧"),
+    theme: String(worldCard?.theme || "剧情向"),
+    setting: String(worldCard?.setting || "原创"),
+    background: String(worldCard?.background || "原创世界"),
+    recommend: String(worldCard?.recommend_tag || "最新发布"),
+    time: String(worldCard?.time_tag || "刚刚更新"),
+    title: String(worldCard?.title || "未命名作品"),
+    subtitle: String(worldCard?.subtitle || ""),
+    summary: String(worldCard?.summary || ""),
+    overview: String(worldCard?.overview || ""),
+    tags: [String(worldCard?.theme || "剧情向")],
+    author: String(uiState.profile?.name || "Drama 用户"),
+    authorId: String(uiState.currentUserId || ""),
+    mode: String(worldCard?.mode || "long_narrative"),
+    chapter: String(worldCard?.chapter_label || "序章"),
+    mainQuest: String(worldCard?.main_quest || ""),
+    npc: String(worldCard?.key_npc || ""),
+    clues: String(worldCard?.key_clues || ""),
+    openingSummary: String(worldCard?.opening_summary || ""),
+    playHook: String(worldCard?.play_hook || ""),
+    cover: worldCard?.cover_url
+      ? `linear-gradient(180deg,rgba(15,23,42,.05),rgba(15,23,42,.35)),url('${String(worldCard.cover_url)}') center/cover`
+      : "linear-gradient(180deg,#c4b5fd 0%,#6d28d9 100%)",
+    like: "0",
+    star: "0",
+    comment: "0",
+    heat: "0.0w",
+    isTest: false,
+    liked: false,
+    favorited: false
+  };
+  const idx = FEED_DATA.findIndex((x) => String(x?.id || "") === id);
+  if (idx >= 0) FEED_DATA[idx] = { ...FEED_DATA[idx], ...feedItem };
+  else FEED_DATA.unshift(feedItem);
+}
+
 function applyBootstrapData(payload, sourceMode = "unknown") {
   replaceArray(FEED_DATA, payload?.feedData || []);
   replaceArray(DRAMA_STORY_IMAGES, payload?.dramaStoryImages || []);
@@ -6256,6 +6297,13 @@ async function publishWorkshopCardToApi(cardId) {
     const card = data?.card;
     if (!card?.id) throw new Error("CARD_PUBLISH_FAILED");
     await syncWorkshopCardsFromApi({ silent: true });
+    upsertFeedDataFromPublishedWorldCard(data?.worldCard || {});
+    void bootstrapClientDataFull(uiState.currentUserId)
+      .then(() => {
+        uiState.bootstrapFullLoaded = true;
+        render();
+      })
+      .catch(() => {});
     uiState.workshopFeedback = data?.message || "发布成功。可在“我的-作品”中查看。";
     return true;
   } catch (error) {
@@ -8108,7 +8156,7 @@ function pageMe() {
     ? uiState.meContentTab
     : "works";
   const creatorWorks = buildCreatorWorks();
-  const draftCreatorWorks = creatorWorks.filter((x) => x.status !== "published");
+  const draftCreatorWorks = creatorWorks;
   const publishedCreatorWorks = creatorWorks.filter((x) => x.status === "published");
   const feedWorks = Array.isArray(ME_CONTENT_LIBRARY.works) ? ME_CONTENT_LIBRARY.works : [];
   const feed = ME_CONTENT_LIBRARY[tab] || [];
@@ -8267,7 +8315,7 @@ function pageMe() {
                   <h4>${x.title}</h4>
                   <div class="home-tags">
                     <span>${formatModeTag(x.mode)}</span>
-                    <span>草稿</span>
+                    <span>${x.status === "published" ? "已发布（保留草稿）" : "草稿"}</span>
                   </div>
                   <div class="home-author">${escapeHtml(displayedName)}</div>
                   <div class="home-metrics">
@@ -9573,7 +9621,6 @@ document.addEventListener("click", (event) => {
         if (!ok) return;
         uiState.meDraftActionOpen = false;
         uiState.meDraftActionCardId = "";
-        uiState.meContentTab = "works";
         render();
       });
       return;
