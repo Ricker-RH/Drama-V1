@@ -433,6 +433,8 @@ const uiState = {
   communityGroupJoining: false,
   communityGroupFeedback: "",
   communityPostMeta: {},
+  communityPostDetailLoadingId: "",
+  communityPostDetailError: "",
   communityCommentDraft: "",
   communityAnnounceDraft: "",
   communityTransferMethod: "password",
@@ -1869,18 +1871,50 @@ function renderExploreLoginModal(options = {}) {
 
 function renderProfileEditModal() {
   const draft = uiState.profileDraft;
+  const avatarText = getAvatarText(draft.name || uiState.profile?.name || "Drama 用户");
+  const avatarUrl = String(draft.avatarUrl || "").trim();
+  const gender = ["男", "女", "保密"].includes(draft.gender) ? draft.gender : "保密";
   return `
     <div class="profile-edit-modal-overlay" data-action="close-profile-edit-modal">
       <div class="profile-edit-modal-card" data-action="noop">
         <div class="profile-edit-modal-head">
           <button class="profile-edit-head-btn" data-action="close-profile-edit-modal">返回</button>
           <h3>编辑资料</h3>
-          <button class="profile-edit-head-btn primary" data-action="save-profile-edit-modal">保存</button>
+          <button class="profile-edit-head-btn primary" data-action="save-profile-edit-modal" ${uiState.profileSaving ? "disabled" : ""}>${uiState.profileSaving ? "保存中..." : "保存"}</button>
         </div>
         <section class="profile-edit-modal-body">
           <div class="user-profile-edit-box">
+            <div class="profile-edit-avatar-row">
+              <button class="profile-edit-avatar-btn" data-action="profile-avatar-upload" aria-label="上传头像">
+                ${
+                  avatarUrl
+                    ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(draft.name || "头像")}" />`
+                    : `<span>${escapeHtml(avatarText)}</span>`
+                }
+              </button>
+              <div class="profile-edit-avatar-actions">
+                <strong>头像</strong>
+                <div class="actions">
+                  <button class="user-edit-btn subtle" data-action="profile-avatar-upload">上传头像</button>
+                  <button class="user-edit-btn subtle" data-action="profile-avatar-reset">恢复默认</button>
+                </div>
+              </div>
+              <input class="profile-avatar-file-input" type="file" accept="image/*" data-field="profile-avatar-file" />
+            </div>
             <label>昵称<input class="profile-edit-input" data-field="name" value="${escapeHtml(draft.name)}" /></label>
             <label>简介标签<input class="profile-edit-input" data-field="handle" value="${escapeHtml(draft.handle)}" /></label>
+            <div class="profile-edit-row">
+              <label>
+                性别
+                <select class="profile-edit-input" data-field="gender">
+                  ${["男", "女", "保密"].map((x) => `<option value="${x}" ${x === gender ? "selected" : ""}>${x}</option>`).join("")}
+                </select>
+              </label>
+              <label>
+                生日
+                <input class="profile-edit-input" type="date" max="${new Date().toISOString().slice(0, 10)}" data-field="birthday" value="${escapeHtml(draft.birthday || "")}" />
+              </label>
+            </div>
             <label>个人介绍<textarea class="profile-edit-input profile-edit-textarea" data-field="bio">${escapeHtml(draft.bio)}</textarea></label>
             <div class="user-profile-cover-tools">
               <span>顶部背景</span>
@@ -1901,11 +1935,14 @@ function renderProfileAvatarPreviewModal() {
   const name = String(uiState.profileAvatarPreview?.name || uiState.profile?.name || "Drama 用户");
   const handle = String(uiState.profileAvatarPreview?.handle || uiState.profile?.handle || "@drama_user");
   const avatarText = String(uiState.profileAvatarPreview?.avatarText || getAvatarText(name));
+  const avatarUrl = String(uiState.profileAvatarPreview?.avatarUrl || uiState.profile?.avatarUrl || "").trim();
   return `
     <div class="avatar-preview-overlay" data-action="close-profile-avatar-preview">
       <div class="avatar-preview-modal" data-action="noop">
         <button class="avatar-preview-close" data-action="close-profile-avatar-preview" aria-label="关闭">×</button>
-        <div class="avatar-preview-bubble">${escapeHtml(avatarText)}</div>
+        <div class="avatar-preview-bubble">
+          ${avatarUrl ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(name)}" />` : escapeHtml(avatarText)}
+        </div>
         <h3>${escapeHtml(name)}</h3>
         <p>${escapeHtml(handle)}</p>
       </div>
@@ -2478,14 +2515,74 @@ function ensureCommunityPostMeta(post) {
       likes: post.likes || 0,
       stars: post.stars || 0,
       commentsCount: post.comments || 0,
-      comments: [
-        { user: "夜航", text: "路线图太有用了，今晚就组队试。", likes: 56 },
-        { user: "青木", text: "能否补一份低配船只的跑图建议？", likes: 34 },
-        { user: "雾汐", text: "已实测，补给点B在暴风时段更稳。", likes: 19 }
-      ]
+      shares: 0,
+      comments: []
     };
   }
   return uiState.communityPostMeta[post.id];
+}
+
+function findCommunityPostById(postId) {
+  const id = String(postId || "").trim();
+  if (!id) return null;
+  for (const key of Object.keys(COMMUNITY_POSTS)) {
+    const list = COMMUNITY_POSTS[key] || [];
+    const found = list.find((x) => String(x?.id || "") === id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function patchCommunityPostById(postId, patch = {}) {
+  const id = String(postId || "").trim();
+  if (!id) return;
+  for (const key of Object.keys(COMMUNITY_POSTS)) {
+    const list = COMMUNITY_POSTS[key] || [];
+    const idx = list.findIndex((x) => String(x?.id || "") === id);
+    if (idx < 0) continue;
+    list[idx] = { ...list[idx], ...patch };
+  }
+}
+
+async function loadCommunityPostDetail(postId, options = {}) {
+  const id = String(postId || "").trim();
+  if (!id) return null;
+  const viewerId = String(uiState.currentUserId || "").trim();
+  const suffix = viewerId ? `&viewerId=${encodeURIComponent(viewerId)}` : "";
+  const data = await apiGetJson(`/community/posts/detail?postId=${encodeURIComponent(id)}${suffix}`);
+  const post = normalizeCommunityPostFromApi(data?.post || {});
+  const comments = Array.isArray(data?.comments)
+    ? data.comments.map((c) => ({
+      id: String(c.id || ""),
+      user: String(c.user_name || c.userName || "用户"),
+      text: String(c.content || "").trim(),
+      likes: Number(c.likes_count || 0)
+    }))
+    : [];
+  patchCommunityPostById(id, {
+    title: post.title,
+    text: post.text,
+    likes: post.likes,
+    stars: post.stars,
+    comments: post.comments,
+    mediaUrls: post.mediaUrls,
+    story: post.story,
+    storyId: post.storyId,
+    user: post.user,
+    time: post.time
+  });
+  uiState.communityPostMeta[id] = {
+    liked: Boolean(data?.post?.liked_by_me),
+    starred: Boolean(data?.post?.favorited_by_me),
+    shared: false,
+    likes: Number(data?.post?.likes_count || post.likes || 0),
+    stars: Number(data?.post?.favorites_count || post.stars || 0),
+    shares: Number(data?.post?.shares_count || 0),
+    commentsCount: Number(data?.post?.comments_count || comments.length || 0),
+    comments
+  };
+  if (!options.silent) render();
+  return { post, comments };
 }
 
 function getHomeFeed() {
@@ -4756,7 +4853,7 @@ function normalizeCommunityPostFromApi(post = {}) {
     text,
     tag: Boolean(post?.is_featured || post?.isFeatured) ? "精华" : "动态",
     likes: Number(post?.likes_count || post?.likes || 0),
-    stars: Math.max(0, Math.floor(Number(post?.likes_count || post?.likes || 0) * 0.22)),
+    stars: Number(post?.favorites_count || post?.stars || 0),
     comments: Number(post?.comments_count || post?.comments || 0),
     featured: Boolean(post?.is_featured || post?.isFeatured),
     story: String(post?.world_title || post?.worldTitle || "").trim() || undefined,
@@ -7849,6 +7946,18 @@ function pageCommunityPostDetail() {
   const post = getSelectedCommunityPost();
   if (!post) return pageCommunityGroup();
   const meta = ensureCommunityPostMeta(post);
+  const postId = String(post.id || "").trim();
+  if (postId && uiState.communityPostDetailLoadingId !== postId && meta && meta.comments.length === 0 && !uiState.communityPostDetailError) {
+    uiState.communityPostDetailLoadingId = postId;
+    void loadCommunityPostDetail(postId, { silent: true })
+      .catch((error) => {
+        uiState.communityPostDetailError = error instanceof Error ? error.message : "加载失败";
+      })
+      .finally(() => {
+        if (uiState.communityPostDetailLoadingId === postId) uiState.communityPostDetailLoadingId = "";
+        render();
+      });
+  }
   return renderExploreShell(`
     <section class="community-page">
       <article class="community-post-detail">
@@ -7861,12 +7970,14 @@ function pageCommunityPostDetail() {
           <button class="${meta.liked ? "active" : ""}" data-action="community-post-like">♡ ${formatCount(meta.likes)}</button>
           <button class="${meta.starred ? "active" : ""}" data-action="community-post-star">☆ ${formatCount(meta.stars)}</button>
           <button data-action="community-post-comment-focus">💬 ${formatCount(meta.commentsCount)}</button>
-          <button data-action="community-post-share">↗ 分享</button>
+          <button data-action="community-post-share">↗ 分享 ${formatCount(meta.shares || 0)}</button>
         </footer>
       </article>
       <article class="community-comments-card">
         <h4>评论（${meta.commentsCount}）</h4>
         <div class="community-comment-input-row"><input data-field="community-comment" value="${escapeHtml(uiState.communityCommentDraft)}" placeholder="说点什么..." /><button data-action="community-post-comment-submit">发送</button></div>
+        ${uiState.communityPostDetailError ? `<p class="community-empty" style="color:#ef4444;">${escapeHtml(uiState.communityPostDetailError)}</p>` : ""}
+        ${uiState.communityPostDetailLoadingId === postId ? `<p class="community-empty">加载评论中...</p>` : ""}
         ${meta.comments
           .map(
             (c) => `
@@ -11162,24 +11273,68 @@ document.addEventListener("click", (event) => {
     }
     if (action === "open-community-post") {
       const id = actionTarget.getAttribute("data-id");
-      if (id) uiState.selectedCommunityPostId = id;
+      if (id) {
+        uiState.selectedCommunityPostId = id;
+        uiState.communityPostDetailError = "";
+        uiState.communityPostDetailLoadingId = id;
+        void loadCommunityPostDetail(id, { silent: true })
+          .catch((error) => {
+            uiState.communityPostDetailError = error instanceof Error ? error.message : "加载失败";
+          })
+          .finally(() => {
+            if (uiState.communityPostDetailLoadingId === id) uiState.communityPostDetailLoadingId = "";
+            render();
+          });
+      }
       window.location.hash = "#/community/post/detail";
       return;
     }
     if (action === "community-post-like") {
+      const post = getSelectedCommunityPost();
+      const postId = String(post?.id || "").trim();
+      if (!postId || !uiState.currentUserId) return;
       const meta = ensureCommunityPostMeta(getSelectedCommunityPost());
       if (!meta) return;
-      meta.liked = !meta.liked;
-      meta.likes += meta.liked ? 1 : -1;
-      render();
+      void apiJson("/community/posts/react", {
+        postId,
+        userId: uiState.currentUserId,
+        reactionType: "like"
+      })
+        .then((data) => {
+          const next = data?.reaction || {};
+          meta.liked = Boolean(next.active);
+          meta.likes = Number(next.likes_count || meta.likes || 0);
+          patchCommunityPostById(postId, { likes: meta.likes });
+          render();
+        })
+        .catch((error) => {
+          uiState.communityGroupFeedback = error instanceof Error ? error.message : "点赞失败";
+          render();
+        });
       return;
     }
     if (action === "community-post-star") {
+      const post = getSelectedCommunityPost();
+      const postId = String(post?.id || "").trim();
+      if (!postId || !uiState.currentUserId) return;
       const meta = ensureCommunityPostMeta(getSelectedCommunityPost());
       if (!meta) return;
-      meta.starred = !meta.starred;
-      meta.stars += meta.starred ? 1 : -1;
-      render();
+      void apiJson("/community/posts/react", {
+        postId,
+        userId: uiState.currentUserId,
+        reactionType: "favorite"
+      })
+        .then((data) => {
+          const next = data?.reaction || {};
+          meta.starred = Boolean(next.active);
+          meta.stars = Number(next.favorites_count || meta.stars || 0);
+          patchCommunityPostById(postId, { stars: meta.stars });
+          render();
+        })
+        .catch((error) => {
+          uiState.communityGroupFeedback = error instanceof Error ? error.message : "收藏失败";
+          render();
+        });
       return;
     }
     if (action === "community-post-comment-focus") {
@@ -11188,21 +11343,55 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "community-post-comment-submit") {
+      const post = getSelectedCommunityPost();
+      const postId = String(post?.id || "").trim();
       const text = (uiState.communityCommentDraft || "").trim();
-      if (!text) return;
-      const meta = ensureCommunityPostMeta(getSelectedCommunityPost());
+      if (!text || !postId || !uiState.currentUserId) return;
+      const meta = ensureCommunityPostMeta(post);
       if (!meta) return;
-      meta.comments.unshift({ user: uiState.isLoggedIn ? "我" : "游客", text, likes: 0 });
-      meta.commentsCount += 1;
-      uiState.communityCommentDraft = "";
-      render();
+      void apiJson("/community/posts/comments", {
+        postId,
+        userId: uiState.currentUserId,
+        content: text
+      })
+        .then((data) => {
+          const c = data?.comment || {};
+          meta.comments.push({
+            id: String(c.id || ""),
+            user: String(c.user_name || uiState.profile?.name || "我"),
+            text: String(c.content || text),
+            likes: Number(c.likes_count || 0)
+          });
+          meta.commentsCount = Number(c.comments_count || meta.comments.length);
+          uiState.communityCommentDraft = "";
+          patchCommunityPostById(postId, { comments: meta.commentsCount });
+          render();
+        })
+        .catch((error) => {
+          uiState.communityGroupFeedback = error instanceof Error ? error.message : "评论失败";
+          render();
+        });
       return;
     }
     if (action === "community-post-share") {
+      const post = getSelectedCommunityPost();
+      const postId = String(post?.id || "").trim();
+      if (!postId) return;
       const meta = ensureCommunityPostMeta(getSelectedCommunityPost());
       if (!meta) return;
-      meta.shared = true;
-      render();
+      void apiJson("/community/posts/share", { postId, userId: uiState.currentUserId || null })
+        .then((data) => {
+          meta.shared = true;
+          meta.shares = Number(data?.sharesCount || (Number(meta.shares || 0) + 1));
+          const shareLink = `${location.origin}${location.pathname}#/community/post/detail`;
+          if (navigator.clipboard?.writeText) navigator.clipboard.writeText(shareLink).catch(() => {});
+          uiState.communityGroupFeedback = "链接已复制";
+          render();
+        })
+        .catch((error) => {
+          uiState.communityGroupFeedback = error instanceof Error ? error.message : "分享失败";
+          render();
+        });
       return;
     }
     if (action === "community-joined-toggle") {
@@ -12976,14 +13165,8 @@ document.addEventListener("keydown", (event) => {
   if (target.getAttribute("data-field") === "community-comment") {
     if (event.key === "Enter") {
       event.preventDefault();
-      const text = (uiState.communityCommentDraft || "").trim();
-      if (!text) return;
-      const meta = ensureCommunityPostMeta(getSelectedCommunityPost());
-      if (!meta) return;
-      meta.comments.unshift({ user: uiState.isLoggedIn ? "我" : "游客", text, likes: 0 });
-      meta.commentsCount += 1;
-      uiState.communityCommentDraft = "";
-      render();
+      const btn = document.querySelector("[data-action='community-post-comment-submit']");
+      if (btn instanceof HTMLElement) btn.click();
     }
     return;
   }

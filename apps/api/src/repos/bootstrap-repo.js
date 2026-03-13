@@ -528,6 +528,13 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       cp.id, cp.community_id, cp.content, cp.likes_count, cp.comments_count, cp.is_featured, cp.created_at, cp.linked_world_card_id,
       u.nickname as user_name,
       wc.title as world_title,
+      (
+        select count(*)
+        from community_post_reactions r
+        where r.community_post_id = cp.id
+          and r.reaction_type = 'favorite'
+          and r.status = 'active'
+      )::integer as favorites_count,
       coalesce((
         select json_agg(pm.media_url order by pm.sort_order)
         from community_post_media pm
@@ -575,7 +582,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
       text: normalizedText,
       tag: row.is_featured ? "精华" : "动态",
       likes: Number(row.likes_count || 0),
-      stars: Math.max(0, Math.floor(Number(row.likes_count || 0) * 0.22)),
+      stars: Number(row.favorites_count || 0),
       comments: Number(row.comments_count || 0),
       featured: Boolean(row.is_featured),
       story: row.world_title || undefined,

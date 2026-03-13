@@ -62,6 +62,7 @@ export async function createPost({
       i.*,
       u.nickname as author_name,
       wc.title as world_title,
+      0::integer as favorites_count,
       coalesce((
         select json_agg(pm.media_url order by pm.sort_order)
         from community_post_media pm
@@ -216,6 +217,13 @@ export async function listPosts({ communityId = "", limit = 100, viewerId = null
         cp.is_featured, cp.linked_world_card_id, cp.created_at,
         u.nickname as author_name,
         wc.title as world_title,
+        (
+          select count(*)
+          from community_post_reactions r
+          where r.community_post_id = cp.id
+            and r.reaction_type = 'favorite'
+            and r.status = 'active'
+        )::integer as favorites_count,
         coalesce((
           select json_agg(pm.media_url order by pm.sort_order)
           from community_post_media pm
@@ -253,6 +261,13 @@ export async function listPosts({ communityId = "", limit = 100, viewerId = null
         cp.is_featured, cp.linked_world_card_id, cp.created_at,
         u.nickname as author_name,
         wc.title as world_title,
+        (
+          select count(*)
+          from community_post_reactions r
+          where r.community_post_id = cp.id
+            and r.reaction_type = 'favorite'
+            and r.status = 'active'
+        )::integer as favorites_count,
         coalesce((
           select json_agg(pm.media_url order by pm.sort_order)
           from community_post_media pm
@@ -285,4 +300,170 @@ export async function listPosts({ communityId = "", limit = 100, viewerId = null
     );
 
   return result.rows || [];
+}
+
+export async function getPostDetail({ postId, viewerId = null }) {
+  const result = await query(
+    `select
+      cp.id, cp.community_id, cp.author_id, cp.content, cp.likes_count, cp.comments_count, cp.shares_count,
+      cp.is_featured, cp.linked_world_card_id, cp.created_at, cp.visibility, cp.status, cp.deleted_at,
+      u.nickname as author_name,
+      wc.title as world_title,
+      (
+        select count(*)
+        from community_post_reactions r
+        where r.community_post_id = cp.id
+          and r.reaction_type = 'favorite'
+          and r.status = 'active'
+      )::integer as favorites_count,
+      exists(
+        select 1
+        from community_post_reactions r
+        where r.community_post_id = cp.id
+          and r.user_id = $2::uuid
+          and r.reaction_type = 'like'
+          and r.status = 'active'
+      ) as liked_by_me,
+      exists(
+        select 1
+        from community_post_reactions r
+        where r.community_post_id = cp.id
+          and r.user_id = $2::uuid
+          and r.reaction_type = 'favorite'
+          and r.status = 'active'
+      ) as favorited_by_me,
+      (
+        cp.visibility in ('public', 'all_users')
+        or cp.visibility is null
+        or (
+          cp.visibility in ('community_only', 'community', '仅社区内可见', '本社区用户')
+          and $2::uuid is not null
+          and exists(
+            select 1
+            from community_members cm
+            where cm.community_id = cp.community_id
+              and cm.user_id = $2::uuid
+              and cm.status = 'active'
+          )
+        )
+      ) as can_view,
+      coalesce((
+        select json_agg(pm.media_url order by pm.sort_order)
+        from community_post_media pm
+        where pm.community_post_id = cp.id
+          and pm.deleted_at is null
+      ), '[]'::json) as media_urls
+     from community_posts cp
+     join users u on u.id = cp.author_id
+     left join world_cards wc on wc.id = cp.linked_world_card_id
+     where cp.id = $1::uuid
+       and cp.status = 'published'
+       and cp.deleted_at is null
+     limit 1`,
+    [postId, viewerId || null]
+  );
+  return result.rows[0] || null;
+}
+
+export async function listPostComments(postId, limit = 80) {
+  const result = await query(
+    `select
+      c.id, c.community_post_id, c.user_id, c.content, c.likes_count, c.created_at,
+      u.nickname as user_name
+     from community_post_comments c
+     join users u on u.id = c.user_id
+     where c.community_post_id = $1::uuid
+       and c.status = 'active'
+     order by c.created_at asc
+     limit $2`,
+    [postId, Math.max(1, Math.min(200, Number(limit) || 80))]
+  );
+  return result.rows || [];
+}
+
+export async function togglePostReaction({ postId, userId, reactionType }) {
+  const type = reactionType === "favorite" ? "favorite" : "like";
+  const result = await query(
+    `with ensure_reaction as (
+      insert into community_post_reactions(community_post_id, user_id, reaction_type, status)
+      values ($1::uuid, $2::uuid, $3, 'active')
+      on conflict (community_post_id, user_id, reaction_type)
+      do update set
+        status = case when community_post_reactions.status = 'active' then 'inactive' else 'active' end,
+        updated_at = now()
+      returning status
+    ),
+    like_count as (
+      select count(*)::integer as likes_count
+      from community_post_reactions
+      where community_post_id = $1::uuid
+        and reaction_type = 'like'
+        and status = 'active'
+    ),
+    favorite_count as (
+      select count(*)::integer as favorites_count
+      from community_post_reactions
+      where community_post_id = $1::uuid
+        and reaction_type = 'favorite'
+        and status = 'active'
+    ),
+    sync_post as (
+      update community_posts cp
+      set likes_count = (select likes_count from like_count),
+          updated_at = now()
+      where cp.id = $1::uuid
+      returning cp.id
+    )
+    select
+      (select status = 'active' from ensure_reaction) as active,
+      (select likes_count from like_count) as likes_count,
+      (select favorites_count from favorite_count) as favorites_count`,
+    [postId, userId, type]
+  );
+  return result.rows[0] || null;
+}
+
+export async function createPostComment({ postId, userId, content }) {
+  const result = await query(
+    `with inserted as (
+      insert into community_post_comments(community_post_id, user_id, content, status)
+      values ($1::uuid, $2::uuid, $3, 'active')
+      returning id, community_post_id, user_id, content, likes_count, created_at
+    ),
+    sync_post as (
+      update community_posts cp
+      set comments_count = (
+            select count(*)
+            from community_post_comments c
+            where c.community_post_id = cp.id
+              and c.status = 'active'
+          ),
+          updated_at = now()
+      where cp.id = $1::uuid
+      returning cp.comments_count
+    )
+    select
+      i.*,
+      s.comments_count,
+      u.nickname as user_name
+    from inserted i
+    cross join sync_post s
+    join users u on u.id = i.user_id`,
+    [postId, userId, content]
+  );
+  return result.rows[0] || null;
+}
+
+export async function incrementPostShare(postId) {
+  const result = await query(
+    `update community_posts
+     set shares_count = shares_count + 1,
+         updated_at = now()
+     where id = $1::uuid
+       and status = 'published'
+       and deleted_at is null
+     returning id, shares_count`,
+    [postId]
+  );
+  return result.rows[0] || null;
 }

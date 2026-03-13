@@ -4,6 +4,11 @@ import {
   createCommunity,
   joinCommunity,
   createPost,
+  getPostDetail,
+  listPostComments,
+  togglePostReaction,
+  createPostComment,
+  incrementPostShare,
   listCommunities,
   listPosts
 } from "../repos/community-repo.js";
@@ -130,6 +135,83 @@ export async function handleCommunity(req, res, pathname) {
     const viewerId = viewerIdQuery || String(sessionUser?.id || "").trim() || null;
     const posts = await listPosts({ communityId, limit, viewerId });
     return json(res, 200, { posts });
+  }
+
+  if (req.method === "GET" && pathname === "/api/v1/community/posts/detail") {
+    const params = req.url?.includes("?") ? new URL(req.url, "http://127.0.0.1").searchParams : new URLSearchParams();
+    const postId = String(params.get("postId") || "").trim();
+    const viewerIdQuery = String(params.get("viewerId") || "").trim();
+    const sessionUser = viewerIdQuery ? null : await resolveSessionUser(req);
+    const viewerId = viewerIdQuery || String(sessionUser?.id || "").trim() || null;
+    if (!postId) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "postId is required" });
+    }
+    const post = await getPostDetail({ postId, viewerId });
+    if (!post?.id) {
+      return json(res, 404, { code: "POST_NOT_FOUND", message: "post not found" });
+    }
+    if (!post.can_view) {
+      return json(res, 403, { code: "FORBIDDEN", message: "该动态仅社区成员可见" });
+    }
+    const comments = await listPostComments(postId, 80);
+    return json(res, 200, { post, comments });
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/community/posts/react") {
+    const body = await parseBody(req);
+    const postId = String(body.postId || "").trim();
+    const userId = String(body.userId || "").trim();
+    const reactionType = String(body.reactionType || "like").trim();
+    if (!postId || !userId) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "postId and userId are required" });
+    }
+    if (!["like", "favorite"].includes(reactionType)) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "reactionType must be like or favorite" });
+    }
+    const detail = await getPostDetail({ postId, viewerId: userId });
+    if (!detail?.id) return json(res, 404, { code: "POST_NOT_FOUND", message: "post not found" });
+    if (!detail.can_view) return json(res, 403, { code: "FORBIDDEN", message: "该动态仅社区成员可见" });
+    const data = await togglePostReaction({ postId, userId, reactionType });
+    if (!data) return json(res, 404, { code: "POST_NOT_FOUND", message: "post not found" });
+    invalidateBootstrapCoreCache();
+    return json(res, 200, { reaction: data });
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/community/posts/comments") {
+    const body = await parseBody(req);
+    const postId = String(body.postId || "").trim();
+    const userId = String(body.userId || "").trim();
+    const content = String(body.content || "").trim();
+    if (!postId || !userId || !content) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "postId, userId and content are required" });
+    }
+    const detail = await getPostDetail({ postId, viewerId: userId });
+    if (!detail?.id) return json(res, 404, { code: "POST_NOT_FOUND", message: "post not found" });
+    if (!detail.can_view) return json(res, 403, { code: "FORBIDDEN", message: "该动态仅社区成员可见" });
+    const comment = await createPostComment({ postId, userId, content });
+    if (!comment?.id) {
+      return json(res, 404, { code: "POST_NOT_FOUND", message: "post not found" });
+    }
+    invalidateBootstrapCoreCache();
+    return json(res, 201, { comment });
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/community/posts/share") {
+    const body = await parseBody(req);
+    const postId = String(body.postId || "").trim();
+    const userId = String(body.userId || "").trim();
+    if (!postId) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "postId is required" });
+    }
+    if (userId) {
+      const detail = await getPostDetail({ postId, viewerId: userId });
+      if (!detail?.id) return json(res, 404, { code: "POST_NOT_FOUND", message: "post not found" });
+      if (!detail.can_view) return json(res, 403, { code: "FORBIDDEN", message: "该动态仅社区成员可见" });
+    }
+    const row = await incrementPostShare(postId);
+    if (!row?.id) return json(res, 404, { code: "POST_NOT_FOUND", message: "post not found" });
+    invalidateBootstrapCoreCache();
+    return json(res, 200, { postId: row.id, sharesCount: Number(row.shares_count || 0) });
   }
 
   return false;
