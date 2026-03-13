@@ -91,6 +91,9 @@ export async function handleCommunity(req, res, pathname) {
     const postType = String(body.postType || "text").trim() || "text";
     const visibility = String(body.visibility || "public").trim() || "public";
     const isFeatured = Boolean(body.isFeatured);
+    const mediaUrls = Array.isArray(body.mediaUrls)
+      ? body.mediaUrls.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 9)
+      : [];
 
     if (!communityId || !authorId || !content) {
       return json(res, 400, {
@@ -106,7 +109,8 @@ export async function handleCommunity(req, res, pathname) {
       linkedWorldCardId: linkedWorldCardId || null,
       postType,
       visibility,
-      isFeatured
+      isFeatured,
+      mediaUrls
     });
     if (!post?.id) {
       return json(res, 500, { code: "POST_CREATE_FAILED", message: "create post failed" });

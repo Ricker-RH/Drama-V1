@@ -7,8 +7,12 @@ export async function createPost({
   linkedWorldCardId = null,
   postType = "text",
   visibility = "public",
-  isFeatured = false
+  isFeatured = false,
+  mediaUrls = []
 }) {
+  const mediaList = Array.isArray(mediaUrls)
+    ? mediaUrls.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 9)
+    : [];
   const postRes = await query(
     `with inserted as (
       insert into community_posts(
@@ -21,6 +25,23 @@ export async function createPost({
       )
       returning id, community_id, author_id, content, linked_world_card_id,
         likes_count, comments_count, shares_count, is_featured, status, created_at
+    ),
+    media_insert as (
+      insert into community_post_media(community_post_id, media_type, media_url, sort_order)
+      select
+        i.id,
+        'image',
+        m.url,
+        m.sort_order
+      from inserted i
+      cross join lateral (
+        select
+          x.url,
+          row_number() over () - 1 as sort_order
+        from unnest($8::text[]) as x(url)
+      ) m
+      where cardinality($8::text[]) > 0
+      returning community_post_id
     ),
     updated_community as (
       update communities c
@@ -40,11 +61,17 @@ export async function createPost({
     select
       i.*,
       u.nickname as author_name,
-      wc.title as world_title
+      wc.title as world_title,
+      coalesce((
+        select json_agg(pm.media_url order by pm.sort_order)
+        from community_post_media pm
+        where pm.community_post_id = i.id
+          and pm.deleted_at is null
+      ), '[]'::json) as media_urls
     from inserted i
     join users u on u.id = i.author_id
     left join world_cards wc on wc.id = i.linked_world_card_id`,
-    [communityId, authorId, content, linkedWorldCardId || null, postType, visibility, Boolean(isFeatured)]
+    [communityId, authorId, content, linkedWorldCardId || null, postType, visibility, Boolean(isFeatured), mediaList]
   );
 
   return postRes.rows[0] || null;
@@ -188,7 +215,13 @@ export async function listPosts({ communityId = "", limit = 100 } = {}) {
         cp.id, cp.community_id, cp.author_id, cp.content, cp.likes_count, cp.comments_count, cp.shares_count,
         cp.is_featured, cp.linked_world_card_id, cp.created_at,
         u.nickname as author_name,
-        wc.title as world_title
+        wc.title as world_title,
+        coalesce((
+          select json_agg(pm.media_url order by pm.sort_order)
+          from community_post_media pm
+          where pm.community_post_id = cp.id
+            and pm.deleted_at is null
+        ), '[]'::json) as media_urls
        from community_posts cp
        join users u on u.id = cp.author_id
        left join world_cards wc on wc.id = cp.linked_world_card_id
@@ -204,7 +237,13 @@ export async function listPosts({ communityId = "", limit = 100 } = {}) {
         cp.id, cp.community_id, cp.author_id, cp.content, cp.likes_count, cp.comments_count, cp.shares_count,
         cp.is_featured, cp.linked_world_card_id, cp.created_at,
         u.nickname as author_name,
-        wc.title as world_title
+        wc.title as world_title,
+        coalesce((
+          select json_agg(pm.media_url order by pm.sort_order)
+          from community_post_media pm
+          where pm.community_post_id = cp.id
+            and pm.deleted_at is null
+        ), '[]'::json) as media_urls
        from community_posts cp
        join users u on u.id = cp.author_id
        left join world_cards wc on wc.id = cp.linked_world_card_id

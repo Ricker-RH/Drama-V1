@@ -523,7 +523,13 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
     `select
       cp.id, cp.community_id, cp.content, cp.likes_count, cp.comments_count, cp.is_featured, cp.created_at, cp.linked_world_card_id,
       u.nickname as user_name,
-      wc.title as world_title
+      wc.title as world_title,
+      coalesce((
+        select json_agg(pm.media_url order by pm.sort_order)
+        from community_post_media pm
+        where pm.community_post_id = cp.id
+          and pm.deleted_at is null
+      ), '[]'::json) as media_urls
     from community_posts cp
     join users u on u.id = cp.author_id
     left join world_cards wc on wc.id = cp.linked_world_card_id
@@ -535,19 +541,24 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
   communityPostRes.rows.forEach((row) => {
     if (!communityPosts[row.community_id]) communityPosts[row.community_id] = [];
     if (communityPosts[row.community_id].length >= 20) return;
+    const rawContent = String(row.content || "").trim();
+    const titleMatch = rawContent.match(/^【([^】]{1,80})】\s*\n?([\s\S]*)$/);
+    const normalizedTitle = titleMatch ? String(titleMatch[1] || "").trim() : (rawContent.slice(0, 28) || "社区动态");
+    const normalizedText = titleMatch ? String(titleMatch[2] || "").trim() : rawContent;
     communityPosts[row.community_id].push({
       id: row.id,
       user: row.user_name,
       time: formatTimeText(row.created_at),
-      title: row.content.slice(0, 28) || "社区动态",
-      text: row.content,
+      title: normalizedTitle,
+      text: normalizedText,
       tag: row.is_featured ? "精华" : "动态",
       likes: Number(row.likes_count || 0),
       stars: Math.max(0, Math.floor(Number(row.likes_count || 0) * 0.22)),
       comments: Number(row.comments_count || 0),
       featured: Boolean(row.is_featured),
       story: row.world_title || undefined,
-      storyId: row.linked_world_card_id || undefined
+      storyId: row.linked_world_card_id || undefined,
+      mediaUrls: Array.isArray(row.media_urls) ? row.media_urls.filter(Boolean) : []
     });
   });
 

@@ -2563,7 +2563,7 @@ function resolveUserNameFromNode(node) {
   return "";
 }
 
-function openAuthorProfileByName(name = "") {
+function openAuthorProfileByName(name = "", preferredAuthorId = "") {
   const resolved = String(name || "").trim();
   if (!resolved) {
     if (!uiState.isLoggedIn) {
@@ -2583,7 +2583,10 @@ function openAuthorProfileByName(name = "") {
     else render();
     return;
   }
-  const resolvedAuthorId = resolveAuthorIdByName(resolved);
+  const preferredId = String(preferredAuthorId || "").trim();
+  const resolvedAuthorId = (isUuid(preferredId) ? preferredId : "")
+    || resolveAuthorIdByName(resolved)
+    || resolveAuthUserIdByAlias(resolved);
   uiState.meViewedUserId = resolvedAuthorId;
   uiState.meViewedUserName = resolved;
   persistViewedProfile();
@@ -3814,6 +3817,7 @@ function pageWorldDetail() {
 function pageAuthorDetail() {
   const currentWorld = getSelectedWorld();
   const profile = uiState.modalProfile || buildAuthorProfileByName(currentWorld?.author || "Drama 用户", currentWorld?.authorId || "");
+  const profileId = String(profile?.id || "").trim() || resolveAuthorIdByName(profile?.name || profile?.handle || "");
   const activeTab = uiState.userModalTab;
   const feedByTab = {
     works: getModalProfileWorks(profile),
@@ -3843,10 +3847,10 @@ function pageAuthorDetail() {
             </div>
           </div>
           <div class="user-profile-actions">
-            <button class="user-follow-btn ${isFollowing ? "active" : ""}" data-action="toggle-follow-author">
+            <button class="user-follow-btn ${isFollowing ? "active" : ""}" data-action="toggle-follow-author" data-user="${escapeHtml(profile.name)}" data-user-id="${escapeHtml(profileId)}">
               ${isFollowing ? "已关注" : "+ 关注"}
             </button>
-            <button class="user-dm-btn" data-action="open-author-dm" data-user="${escapeHtml(profile.name)}" data-user-id="${escapeHtml(profile.id || "")}">私聊</button>
+            <button class="user-dm-btn" data-action="open-author-dm" data-user="${escapeHtml(profile.name)}" data-user-id="${escapeHtml(profileId)}">私聊</button>
           </div>
         </div>
         ${uiState.authorFeedback ? `<div class="user-follow-feedback">${escapeHtml(uiState.authorFeedback)}</div>` : ""}
@@ -4689,8 +4693,11 @@ async function publishCommunityCreateAndPersist() {
 }
 
 function normalizeCommunityPostFromApi(post = {}) {
-  const text = String(post?.content || "").trim();
-  const title = text ? text.slice(0, 28) : "社区动态";
+  const rawContent = String(post?.content || "").trim();
+  const titleMatch = rawContent.match(/^【([^】]{1,80})】\s*\n?([\s\S]*)$/);
+  const title = titleMatch ? String(titleMatch[1] || "").trim() : (rawContent ? rawContent.slice(0, 28) : "社区动态");
+  const text = titleMatch ? String(titleMatch[2] || "").trim() : rawContent;
+  const mediaUrls = normalizeMediaUrls(post?.media_urls || post?.mediaUrls);
   return {
     id: String(post?.id || `cp_${Date.now()}`),
     user: String(post?.author_name || post?.authorName || "").trim() || "匿名",
@@ -4703,13 +4710,26 @@ function normalizeCommunityPostFromApi(post = {}) {
     comments: Number(post?.comments_count || post?.comments || 0),
     featured: Boolean(post?.is_featured || post?.isFeatured),
     story: String(post?.world_title || post?.worldTitle || "").trim() || undefined,
-    storyId: String(post?.linked_world_card_id || post?.storyId || "").trim() || undefined
+    storyId: String(post?.linked_world_card_id || post?.storyId || "").trim() || undefined,
+    mediaUrls
   };
 }
 
 async function publishCommunityPostAndPersist() {
   const text = String(uiState.communityComposeText || "").trim();
-  if (!text) return;
+  const title = String(uiState.communityComposeTitle || "").trim();
+  const mediaList = Array.isArray(uiState.communityComposeMedia) ? uiState.communityComposeMedia : [];
+  const mediaUrls = normalizeMediaUrls(mediaList);
+  if (!mediaUrls.length) {
+    uiState.communityGroupFeedback = "请先上传至少 1 张图片，再发布文字内容";
+    render();
+    return;
+  }
+  if (!String(title || text).trim()) {
+    uiState.communityGroupFeedback = "请填写标题或正文";
+    render();
+    return;
+  }
   if (!uiState.isLoggedIn || !uiState.currentUserId) {
     uiState.communityGroupFeedback = "请先登录后再发布";
     setPostLoginRedirectHash("#/community/post");
@@ -4718,58 +4738,40 @@ async function publishCommunityPostAndPersist() {
     return;
   }
   const communityId = String(uiState.selectedCommunityId || "").trim();
-  if (!communityId) {
-    uiState.communityGroupFeedback = "未选择社区，无法发布";
+  if (!communityId || !isUuid(communityId)) {
+    uiState.communityGroupFeedback = "未选择有效社区，无法发布";
     render();
     return;
   }
+  const content = title ? `【${title}】\n${text}`.trim() : text;
 
   uiState.communityPostPublished = true;
   uiState.communityGroupFeedback = "";
   render();
   try {
-    if (!isUuid(communityId)) {
-      const localPost = {
-        id: `cp_local_${Date.now()}`,
-        user: String(uiState.profile?.name || "").trim() || "我",
-        time: "刚刚",
-        title: text.slice(0, 28) || "社区动态",
-        text,
-        tag: "动态",
-        likes: 0,
-        stars: 0,
-        comments: 0,
-        featured: false,
-        story: uiState.communityComposeStoryId
-          ? FEED_DATA.find((x) => x.id === uiState.communityComposeStoryId)?.title
-          : undefined,
-        storyId: uiState.communityComposeStoryId || undefined
-      };
-      if (!COMMUNITY_POSTS[communityId]) COMMUNITY_POSTS[communityId] = [];
-      COMMUNITY_POSTS[communityId].unshift(localPost);
-      uiState.selectedCommunityPostId = localPost.id;
-      uiState.communityComposeText = "";
-      uiState.communityComposeStoryId = "";
-      uiState.communityPostPublished = false;
-      uiState.communityGroupFeedback = "发布成功";
-      render();
-      return;
-    }
-
     const data = await apiJson("/community/posts", {
       communityId,
       authorId: uiState.currentUserId,
-      content: text,
+      content,
       linkedWorldCardId: uiState.communityComposeStoryId || null,
       postType: "text",
-      visibility: "public"
+      visibility: "public",
+      mediaUrls,
+      mentions: uiState.communityComposeMentions || [],
+      topics: uiState.communityComposeTopics || []
     });
     const nextPost = normalizeCommunityPostFromApi(data?.post || {});
     if (!COMMUNITY_POSTS[communityId]) COMMUNITY_POSTS[communityId] = [];
     COMMUNITY_POSTS[communityId].unshift(nextPost);
     uiState.selectedCommunityPostId = nextPost.id;
+    uiState.communityComposeTitle = "";
     uiState.communityComposeText = "";
+    uiState.communityComposeMedia = [];
+    uiState.communityComposeMentions = [];
+    uiState.communityComposeTopics = [];
     uiState.communityComposeStoryId = "";
+    uiState.communityComposeMentionSheetOpen = false;
+    uiState.communityComposeTopicSheetOpen = false;
     const selectedCommunity = getSelectedCommunity();
     if (selectedCommunity) {
       selectedCommunity.postCount = Math.max(0, Number(selectedCommunity.postCount || 0) + 1);
@@ -8747,10 +8749,10 @@ function pageMe() {
             ${
               viewingOther
                 ? `
-              <button class="me-edit-btn ${Boolean(viewedProfile?.isFollowedByMe) ? "active" : ""}" data-action="toggle-follow-author">
+              <button class="me-edit-btn ${Boolean(viewedProfile?.isFollowedByMe) ? "active" : ""}" data-action="toggle-follow-author" data-user="${escapeHtml(displayedName)}" data-user-id="${escapeHtml(viewedId || viewedProfile?.id || "")}">
                 ${Boolean(viewedProfile?.isFollowedByMe) ? "已关注" : "关注"}
               </button>
-              <button class="me-edit-btn ghost" data-action="me-visitor-chat">私信</button>
+              <button class="me-edit-btn ghost" data-action="me-visitor-chat" data-user="${escapeHtml(displayedName)}" data-user-id="${escapeHtml(viewedId || viewedProfile?.id || "")}">私信</button>
             `
                 : `
               <button class="me-edit-btn" data-action="open-profile-edit-modal">编辑资料</button>
@@ -12467,6 +12469,8 @@ document.addEventListener("click", (event) => {
   uiState.showWorldShareImageModal = false;
   uiState.worldShareMode = "picker";
   uiState.worldShareFeedback = "";
+  uiState.communityComposeMentionSheetOpen = false;
+  uiState.communityComposeTopicSheetOpen = false;
   if (window.location.hash === go) {
     render();
     window.scrollTo({ top: 0, behavior: "smooth" });
