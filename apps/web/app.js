@@ -8606,8 +8606,8 @@ function pageMeFollowers() {
   const followsTotal = ME_RELATION_USERS.filter((x) => isFollowing(x)).length;
   const mutualTotal = ME_RELATION_USERS.filter((x) => isFan(x) && isFollowing(x)).length;
   const list = ME_RELATION_USERS.filter((x) => {
-    if (tab === "粉丝") return isFan(x) && !isFollowing(x);
-    if (tab === "关注") return isFollowing(x) && !isFan(x);
+    if (tab === "粉丝") return isFan(x);
+    if (tab === "关注") return isFollowing(x);
     return isFan(x) && isFollowing(x);
   }).filter((x) => {
     if (String(x?.id || "").trim() === String(uiState.currentUserId || "").trim()) return false;
