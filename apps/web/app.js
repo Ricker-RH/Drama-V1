@@ -6224,7 +6224,7 @@ async function saveWorkshopCardToApi() {
       || normalizeCreatorCardToWorkshop(card);
     uiState.workshopPendingCardId = pending.id;
     seedWorkshopPublishDraft(pending);
-    uiState.workshopFeedback = "卡片已保存到草稿箱";
+    uiState.workshopFeedback = "已保存到「我的-草稿箱」";
     return pending;
   } catch (error) {
     uiState.workshopFeedback = `保存失败：${error instanceof Error ? error.message : "unknown"}`;
@@ -6579,7 +6579,6 @@ function pageWorkshop() {
   const meta = WORKSHOP_MODE_META[mode];
   const authoringMode = getWorkshopEffectiveAuthoringMode(mode);
   const draft = normalizeWorkshopDraftForMode(mode, getWorkshopDraftByMode(mode));
-  const creatorWorks = buildCreatorWorks();
   const parseMeta = uiState.workshopCustomParsed || null;
   const workshopFieldExamples = {
     "workshop-world-openingLine": "例如：暴雨夜，旧站台广播突然点名你的代号。",
@@ -6714,31 +6713,19 @@ function pageWorkshop() {
           ${authoringMode === "template" ? renderModeFields() : ""}
 
           <div class="workshop-action-row">
-            <button class="primary" data-action="workshop-save-card">${uiState.workshopSaving ? "保存中..." : "保存卡片"}</button>
+            <button class="primary" data-action="workshop-save-card">${uiState.workshopSaving ? "保存中..." : "保存到我的草稿箱"}</button>
             <button data-action="workshop-generate-preview">生成预览回合</button>
             <button data-action="workshop-copy-spec">复制运行上下文</button>
             <button data-action="workshop-reset-mode">重置当前模式</button>
           </div>
           ${uiState.workshopFeedback ? `<p class="workshop-feedback">${escapeHtml(uiState.workshopFeedback)}</p>` : ""}
           <div class="workshop-card-list">
-            <h4>我的创作卡</h4>
-            <div class="workshop-card-list-grid">
-              ${
-                creatorWorks.length
-                  ? creatorWorks.slice(0, 8).map((item) => `
-                    <button class="workshop-card-chip ${item.id === uiState.workshopActiveCardId ? "active" : ""}" data-action="workshop-select-existing-card" data-id="${item.id}">
-                      <strong>${escapeHtml(item.title)}</strong>
-                      <span>${escapeHtml(item.subtitle)} · ${item.status === "published" ? "已发布" : "草稿"}</span>
-                    </button>
-                  `).join("")
-                  : "<p class='workshop-card-empty'>暂无卡片，先保存一张。</p>"
-              }
-            </div>
+            <h4>草稿管理入口</h4>
+            <p class="workshop-card-empty">草稿统一在「我的 - 草稿箱」中查看与管理。</p>
           </div>
         </article>
       </div>
     </section>
-    ${renderWorkshopPublishFlow()}
   `);
 }
 
@@ -9917,9 +9904,8 @@ document.addEventListener("click", (event) => {
       }
       void saveWorkshopCardToApi().then((card) => {
         if (!card) return;
-        uiState.workshopPendingCardId = card.id;
         uiState.workshopActiveCardId = card.id;
-        uiState.workshopSaveDecisionOpen = true;
+        uiState.workshopSaveDecisionOpen = false;
         uiState.workshopPublishModalOpen = false;
         render();
       });
@@ -9955,7 +9941,7 @@ document.addEventListener("click", (event) => {
     if (action === "workshop-hold-draft") {
       uiState.workshopSaveDecisionOpen = false;
       uiState.workshopPublishModalOpen = false;
-      uiState.workshopFeedback = "已存入草稿箱，可在「我的-作品」中查看。";
+      uiState.workshopFeedback = "已存入草稿箱，可在「我的-草稿箱」中查看。";
       render();
       return;
     }
