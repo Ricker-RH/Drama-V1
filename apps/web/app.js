@@ -8241,9 +8241,10 @@ function pageMe() {
     uiState.isFollowingAuthor = Boolean(viewedProfile.isFollowedByMe);
   }
 
-  const tab = ["drafts", "works", "likes", "favorites", "history"].includes(uiState.meContentTab)
+  const requestedTab = ["drafts", "works", "likes", "favorites", "history"].includes(uiState.meContentTab)
     ? uiState.meContentTab
     : "works";
+  const tab = viewingOther && requestedTab === "drafts" ? "works" : requestedTab;
   const syncExpired = (Date.now() - Number(uiState.workshopLastSyncAt || 0)) > 8000;
   if (
     !viewingOther
@@ -8411,7 +8412,7 @@ function pageMe() {
 
       <article class="me-content-card">
         <div class="me-tab-row">
-          <button class="${tab === "drafts" ? "active" : ""}" data-action="me-content-tab" data-tab="drafts">草稿箱</button>
+          ${viewingOther ? "" : `<button class="${tab === "drafts" ? "active" : ""}" data-action="me-content-tab" data-tab="drafts">草稿箱</button>`}
           <button class="${tab === "works" ? "active" : ""}" data-action="me-content-tab" data-tab="works">作品</button>
           <button class="${tab === "likes" ? "active" : ""}" data-action="me-content-tab" data-tab="likes">喜欢</button>
           <button class="${tab === "favorites" ? "active" : ""}" data-action="me-content-tab" data-tab="favorites">收藏</button>
