@@ -8244,9 +8244,19 @@ function pageMe() {
   const tab = ["drafts", "works", "likes", "favorites", "history"].includes(uiState.meContentTab)
     ? uiState.meContentTab
     : "works";
+  const syncExpired = (Date.now() - Number(uiState.workshopLastSyncAt || 0)) > 8000;
+  if (
+    !viewingOther
+    && uiState.isLoggedIn
+    && uiState.currentUserId
+    && (uiState.workshopCardsLoadedForUser !== uiState.currentUserId || syncExpired)
+  ) {
+    void syncWorkshopCardsFromApi({ silent: true });
+  }
   const creatorWorks = buildCreatorWorks();
   const draftCreatorWorks = creatorWorks.filter((x) => x.status !== "published");
   const publishedCreatorWorks = creatorWorks.filter((x) => x.status === "published");
+  const feedWorks = Array.isArray(ME_CONTENT_LIBRARY.works) ? ME_CONTENT_LIBRARY.works : [];
   const feed = ME_CONTENT_LIBRARY[tab] || [];
   const publishedWorldIdSet = new Set(
     publishedCreatorWorks
@@ -8267,6 +8277,23 @@ function pageMe() {
     const key = String(item.id || item.title || Math.random());
     if (!draftCardMap.has(key)) draftCardMap.set(key, item);
   });
+  if (!viewingOther && draftCreatorWorks.length === 0) {
+    feedWorks
+      .filter((x) => Boolean(x?.draft) || String(x?.status || "").trim() === "draft" || String(x?.status || "").trim() === "unpublished")
+      .forEach((x, idx) => {
+        const key = String(x?.creatorCardId || x?.id || `feed_draft_${idx + 1}`);
+        if (draftCardMap.has(key)) return;
+        draftCardMap.set(key, {
+          id: key,
+          mode: "long_narrative",
+          title: x?.title || `草稿 ${idx + 1}`,
+          subtitle: x?.meta || "创作草稿",
+          summary: x?.stat || "",
+          status: "draft",
+          worldId: ""
+        });
+      });
+  }
   const draftTabCards = [...draftCardMap.values()];
 
   const visitorWorks = viewingOther
