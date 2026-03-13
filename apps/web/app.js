@@ -504,6 +504,7 @@ const uiState = {
   workshopFeedback: "",
   workshopSavedCards: [],
   workshopCardsLoadedForUser: "",
+  workshopLastSyncAt: 0,
   workshopSaving: false,
   workshopPublishing: false,
   workshopActiveCardId: "",
@@ -697,6 +698,7 @@ function applyBootstrapData(payload, sourceMode = "unknown") {
     if (me.coverUrl) uiState.meHeroCover = `url("${me.coverUrl}")`;
     if (prevUser !== uiState.currentUserId) {
       uiState.workshopCardsLoadedForUser = "";
+      uiState.workshopLastSyncAt = 0;
       uiState.workshopSavedCards = [];
       uiState.workshopActiveCardId = "";
       uiState.meViewedUserId = "";
@@ -718,6 +720,7 @@ function applyBootstrapData(payload, sourceMode = "unknown") {
     ME_CONTENT_LIBRARY.favorites = [];
     ME_CONTENT_LIBRARY.history = [];
     uiState.workshopCardsLoadedForUser = "";
+    uiState.workshopLastSyncAt = 0;
     uiState.workshopSavedCards = [];
     uiState.workshopActiveCardId = "";
     uiState.meViewedUserId = "";
@@ -5316,7 +5319,7 @@ async function loginWithAccountAndSync() {
       throw new Error(data?.message || data?.code || `HTTP_${resp.status}`);
     }
 
-    await syncUserAfterAuth();
+    await syncUserAfterAuth(data.user.id);
 
     uiState.showLoginModal = false;
     uiState.loginPassword = "";
@@ -5367,7 +5370,7 @@ async function registerWithAccountAndSync() {
       throw new Error(data?.message || data?.code || `HTTP_${resp.status}`);
     }
 
-    await syncUserAfterAuth();
+    await syncUserAfterAuth(data.user.id);
 
     uiState.showLoginModal = false;
     uiState.accountAuthMode = "login";
@@ -5385,15 +5388,22 @@ async function registerWithAccountAndSync() {
   }
 }
 
-async function syncUserAfterAuth() {
-  const boot = await fetch(`${API_BASE}/bootstrap?mode=full`, { credentials: "same-origin", cache: "no-store" });
+async function syncUserAfterAuth(preferredUserId = "") {
+  const preferredId = String(preferredUserId || "").trim();
+  const sessionUser = preferredId ? null : await getServerAuthSessionUser();
+  const resolvedUserId = preferredId || String(sessionUser?.id || "").trim();
+  const query = resolvedUserId
+    ? `?mode=full&userId=${encodeURIComponent(resolvedUserId)}`
+    : "?mode=full";
+  const boot = await fetch(`${API_BASE}/bootstrap${query}`, { credentials: "same-origin", cache: "no-store" });
   if (!boot.ok) throw new Error(`BOOTSTRAP_${boot.status}`);
   const payload = await boot.json();
   applyBootstrapData(payload, "full");
   uiState.bootstrapFullLoaded = true;
   try {
-    if (payload?.user?.id) {
-      localStorage.setItem(`${BOOTSTRAP_FULL_CACHE_PREFIX}${payload.user.id}`, JSON.stringify(payload));
+    const cacheUserId = String(payload?.user?.id || resolvedUserId || "").trim();
+    if (cacheUserId) {
+      localStorage.setItem(`${BOOTSTRAP_FULL_CACHE_PREFIX}${cacheUserId}`, JSON.stringify(payload));
     }
   } catch {}
 }
@@ -6110,6 +6120,7 @@ async function syncWorkshopCardsFromApi({ silent = true } = {}) {
     const cards = Array.isArray(data?.cards) ? data.cards : [];
     uiState.workshopSavedCards = cards.map((card) => normalizeCreatorCardToWorkshop(card));
     uiState.workshopCardsLoadedForUser = uiState.currentUserId;
+    uiState.workshopLastSyncAt = Date.now();
     if (!silent) {
       uiState.workshopFeedback = `已同步 ${cards.length} 张创作卡`;
       render();
@@ -6556,7 +6567,12 @@ function pageWorkshopEntry() {
 }
 
 function pageWorkshop() {
-  if (uiState.isLoggedIn && uiState.currentUserId && uiState.workshopCardsLoadedForUser !== uiState.currentUserId) {
+  const syncExpired = (Date.now() - Number(uiState.workshopLastSyncAt || 0)) > 8000;
+  if (
+    uiState.isLoggedIn
+    && uiState.currentUserId
+    && (uiState.workshopCardsLoadedForUser !== uiState.currentUserId || syncExpired)
+  ) {
     void syncWorkshopCardsFromApi({ silent: true });
   }
   const mode = uiState.workshopMode;
@@ -8093,10 +8109,14 @@ function pageMe() {
     uiState.isFollowingAuthor = Boolean(viewedProfile.isFollowedByMe);
   }
 
-  const tab = uiState.meContentTab;
+  const tab = ["drafts", "works", "likes", "favorites", "history"].includes(uiState.meContentTab)
+    ? uiState.meContentTab
+    : "works";
   const creatorWorks = buildCreatorWorks();
+  const draftCreatorWorks = creatorWorks.filter((x) => x.status !== "published");
+  const publishedCreatorWorks = creatorWorks.filter((x) => x.status === "published");
   const feed = ME_CONTENT_LIBRARY[tab] || [];
-  const creatorTitleSet = new Set(creatorWorks.map((x) => x.title));
+  const creatorTitleSet = new Set(publishedCreatorWorks.map((x) => x.title));
   const ownFeed = tab === "works"
     ? feed.filter((x) => !creatorTitleSet.has(x.title))
     : feed;
@@ -8112,6 +8132,7 @@ function pageMe() {
       }))
     : [];
   const visitorFeedByTab = {
+    drafts: [],
     works: visitorWorks,
     likes: [],
     favorites: [],
@@ -8211,6 +8232,7 @@ function pageMe() {
 
       <article class="me-content-card">
         <div class="me-tab-row">
+          <button class="${tab === "drafts" ? "active" : ""}" data-action="me-content-tab" data-tab="drafts">草稿箱</button>
           <button class="${tab === "works" ? "active" : ""}" data-action="me-content-tab" data-tab="works">作品</button>
           <button class="${tab === "likes" ? "active" : ""}" data-action="me-content-tab" data-tab="likes">喜欢</button>
           <button class="${tab === "favorites" ? "active" : ""}" data-action="me-content-tab" data-tab="favorites">收藏</button>
@@ -8218,9 +8240,33 @@ function pageMe() {
         </div>
         <div class="me-content-grid">
           ${
-            tab === "works"
+            tab === "drafts"
+              ? draftCreatorWorks
+                  .map(
+                    (x) => `
+              <article class="home-card me-home-card creator-work-card" data-action="noop">
+                <div class="home-cover creator-cover mode-${x.mode}">
+                  <div class="creator-draft-mask"><span>草稿箱</span></div>
+                </div>
+                <div class="home-body">
+                  <h4>${x.title}</h4>
+                  <div class="home-tags">
+                    <span>${formatModeTag(x.mode)}</span>
+                    <span>草稿</span>
+                  </div>
+                  <div class="home-author">${escapeHtml(displayedName)}</div>
+                  <div class="home-metrics">
+                    <span>${escapeHtml(x.subtitle || "创作草稿")}</span>
+                    <span>${escapeHtml(x.summary || "")}</span>
+                  </div>
+                </div>
+              </article>
+            `
+                  )
+                  .join("")
+              : tab === "works"
               ? [
-                  ...creatorWorks.map(
+                  ...publishedCreatorWorks.map(
                     (x) => `
               <article class="home-card me-home-card creator-work-card" data-action="noop">
                 <div class="home-cover creator-cover mode-${x.mode}">
@@ -8280,8 +8326,11 @@ function pageMe() {
                   .join("")
           }
           ${
-            tab !== "works" && uniqueFeed.length === 0
-              ? `<div class="me-content-empty-tip">暂无内容</div>`
+            (
+              (tab === "drafts" && draftCreatorWorks.length === 0)
+              || (tab !== "drafts" && tab !== "works" && uniqueFeed.length === 0)
+            )
+              ? `<div class="me-content-empty-tip">${tab === "drafts" ? "暂无草稿" : "暂无内容"}</div>`
               : ""
           }
         </div>
@@ -9409,7 +9458,7 @@ document.addEventListener("click", (event) => {
     }
     if (action === "me-content-tab") {
       const tab = actionTarget.getAttribute("data-tab");
-      if (tab && ["works", "likes", "favorites", "history"].includes(tab)) {
+      if (tab && ["drafts", "works", "likes", "favorites", "history"].includes(tab)) {
         uiState.meContentTab = tab;
         render();
       }
