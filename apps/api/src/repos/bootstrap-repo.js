@@ -108,6 +108,8 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
         u.avatar_url,
         u.bio,
         coalesce(up.extra->>'handle', '@'||replace(lower(u.nickname), ' ', '_')) as handle,
+        coalesce(up.extra->>'gender', '保密') as gender,
+        coalesce(up.extra->>'birthday', '') as birthday,
         up.cover_url,
         coalesce(wa.balance, 0) as coins
       from users u
@@ -298,6 +300,8 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
             bio: currentUser.bio || "",
             avatarUrl: currentUser.avatar_url || "",
             coverUrl: currentUser.cover_url || "",
+            gender: currentUser.gender || "保密",
+            birthday: currentUser.birthday || "",
             coins: Number(currentUser.coins || 0)
           }
         : null,
@@ -533,9 +537,27 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
     from community_posts cp
     join users u on u.id = cp.author_id
     left join world_cards wc on wc.id = cp.linked_world_card_id
-    where cp.status='published' and cp.community_id is not null
+    where cp.status='published'
+      and cp.community_id is not null
+      and (
+        cp.visibility in ('public', 'all_users')
+        or cp.visibility is null
+        or (
+          cp.visibility in ('community_only', 'community', '仅社区内可见', '本社区用户')
+          and $1::uuid is not null
+          and exists(
+            select 1
+            from community_members cm
+            where cm.community_id = cp.community_id
+              and cm.user_id = $1::uuid
+              and cm.status = 'active'
+          )
+        )
+      )
     order by cp.created_at desc
     limit 1000`
+    ,
+    [currentUser?.id || null]
   );
   const communityPosts = {};
   communityPostRes.rows.forEach((row) => {
@@ -572,6 +594,8 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
             bio: currentUser.bio || "",
             avatarUrl: currentUser.avatar_url || "",
             coverUrl: currentUser.cover_url || "",
+            gender: currentUser.gender || "保密",
+            birthday: currentUser.birthday || "",
             coins: Number(currentUser.coins || 0)
           }
         : null,
@@ -1046,6 +1070,8 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
           bio: currentUser.bio || "",
           avatarUrl: currentUser.avatar_url || "",
           coverUrl: currentUser.cover_url || "",
+          gender: currentUser.gender || "保密",
+          birthday: currentUser.birthday || "",
           coins: Number(currentUser.coins || 0)
         }
       : null,

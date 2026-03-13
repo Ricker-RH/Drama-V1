@@ -207,7 +207,7 @@ export async function joinCommunity({ communityId, userId }) {
   return result.rows[0] || null;
 }
 
-export async function listPosts({ communityId = "", limit = 100 } = {}) {
+export async function listPosts({ communityId = "", limit = 100, viewerId = null } = {}) {
   const hasCommunity = String(communityId || "").trim().length > 0;
   const result = hasCommunity
     ? await query(
@@ -228,9 +228,24 @@ export async function listPosts({ communityId = "", limit = 100 } = {}) {
        where cp.status = 'published'
          and cp.deleted_at is null
          and cp.community_id = $1::uuid
+         and (
+           cp.visibility in ('public', 'all_users')
+           or cp.visibility is null
+           or (
+             cp.visibility in ('community_only', 'community', '仅社区内可见', '本社区用户')
+             and $3::uuid is not null
+             and exists(
+               select 1
+               from community_members cm
+               where cm.community_id = cp.community_id
+                 and cm.user_id = $3::uuid
+                 and cm.status = 'active'
+             )
+           )
+         )
        order by cp.created_at desc
        limit $2`,
-      [communityId, Math.max(1, Math.min(200, Number(limit) || 100))]
+      [communityId, Math.max(1, Math.min(200, Number(limit) || 100)), viewerId || null]
     )
     : await query(
       `select
@@ -249,9 +264,24 @@ export async function listPosts({ communityId = "", limit = 100 } = {}) {
        left join world_cards wc on wc.id = cp.linked_world_card_id
        where cp.status = 'published'
          and cp.deleted_at is null
+         and (
+           cp.visibility in ('public', 'all_users')
+           or cp.visibility is null
+           or (
+             cp.visibility in ('community_only', 'community', '仅社区内可见', '本社区用户')
+             and $2::uuid is not null
+             and exists(
+               select 1
+               from community_members cm
+               where cm.community_id = cp.community_id
+                 and cm.user_id = $2::uuid
+                 and cm.status = 'active'
+             )
+           )
+         )
        order by cp.created_at desc
        limit $1`,
-      [Math.max(1, Math.min(200, Number(limit) || 100))]
+      [Math.max(1, Math.min(200, Number(limit) || 100)), viewerId || null]
     );
 
   return result.rows || [];

@@ -286,7 +286,8 @@ const uiState = {
   profileAvatarPreview: {
     name: "",
     handle: "",
-    avatarText: ""
+    avatarText: "",
+    avatarUrl: ""
   },
   modalProfile: null,
   userModalTab: "works",
@@ -329,13 +330,22 @@ const uiState = {
   profile: {
     name: "Drama 用户",
     handle: "@drama_user",
-    bio: ""
+    bio: "",
+    avatarUrl: "",
+    gender: "保密",
+    birthday: "",
+    coverUrl: ""
   },
   profileDraft: {
     name: "Drama 用户",
     handle: "@drama_user",
-    bio: ""
+    bio: "",
+    avatarUrl: "",
+    gender: "保密",
+    birthday: "",
+    coverUrl: ""
   },
+  profileSaving: false,
   dynamicTab: "推荐",
   showDynamicComposer: false,
   dynamicPublishing: false,
@@ -417,7 +427,7 @@ const uiState = {
   communityComposeMentionSheetOpen: false,
   communityComposeTopicSheetOpen: false,
   communityComposeStoryId: "",
-  communityComposeVisibility: "公开 · 社区内",
+  communityComposeVisibility: "community_only",
   communityComposeSync: true,
   communityPostPublished: false,
   communityGroupJoining: false,
@@ -795,10 +805,14 @@ function applyBootstrapData(payload, sourceMode = "unknown") {
     uiState.profile = {
       name: me.name || "Drama 用户",
       handle: me.handle || "@drama_user",
-      bio: me.bio || ""
+      bio: me.bio || "",
+      avatarUrl: me.avatarUrl || "",
+      gender: me.gender || "保密",
+      birthday: me.birthday || "",
+      coverUrl: me.coverUrl || ""
     };
     uiState.profileDraft = { ...uiState.profile };
-    if (me.coverUrl) uiState.meHeroCover = `url("${me.coverUrl}")`;
+    uiState.meHeroCover = me.coverUrl ? `url("${me.coverUrl}")` : "";
     if (prevUser !== uiState.currentUserId) {
       uiState.workshopCardsLoadedForUser = "";
       uiState.workshopLastSyncAt = 0;
@@ -2334,6 +2348,38 @@ function getCommunityStoryOptions() {
 
 function getSelectedCommunity() {
   return COMMUNITY_LIST.find((x) => x.id === uiState.selectedCommunityId) || COMMUNITY_LIST[0];
+}
+
+function normalizeComposeVisibility(value) {
+  const v = String(value || "").trim();
+  if (v === "public" || v === "all_users" || v === "所有用户") return "public";
+  return "community_only";
+}
+
+function getComposeVisibilityLabel(value) {
+  return normalizeComposeVisibility(value) === "public" ? "所有用户" : "本社区用户";
+}
+
+function resolveCommunityComposeTargetId() {
+  const current = String(uiState.selectedCommunityId || "").trim();
+  if (isUuid(current) && COMMUNITY_LIST.some((x) => String(x?.id || "").trim() === current)) return current;
+  const uid = String(uiState.currentUserId || "").trim();
+  const created = COMMUNITY_LIST.find((x) => isUuid(x?.id) && uid && String(x?.ownerId || "").trim() === uid);
+  if (created?.id) {
+    uiState.selectedCommunityId = created.id;
+    return created.id;
+  }
+  const joined = COMMUNITY_LIST.find((x) => isUuid(x?.id) && Boolean(x?.joinedByMe));
+  if (joined?.id) {
+    uiState.selectedCommunityId = joined.id;
+    return joined.id;
+  }
+  const first = COMMUNITY_LIST.find((x) => isUuid(x?.id));
+  if (first?.id) {
+    uiState.selectedCommunityId = first.id;
+    return first.id;
+  }
+  return "";
 }
 
 function getMyJoinedCommunities() {
@@ -4741,7 +4787,7 @@ async function publishCommunityPostAndPersist() {
     render();
     return;
   }
-  const communityId = String(uiState.selectedCommunityId || "").trim();
+  const communityId = String(resolveCommunityComposeTargetId() || "").trim();
   if (!communityId || !isUuid(communityId)) {
     uiState.communityGroupFeedback = "未选择有效社区，无法发布";
     render();
@@ -4759,7 +4805,7 @@ async function publishCommunityPostAndPersist() {
       content,
       linkedWorldCardId: uiState.communityComposeStoryId || null,
       postType: "text",
-      visibility: "public",
+      visibility: normalizeComposeVisibility(uiState.communityComposeVisibility),
       mediaUrls,
       mentions: uiState.communityComposeMentions || [],
       topics: uiState.communityComposeTopics || []
@@ -4776,6 +4822,7 @@ async function publishCommunityPostAndPersist() {
     uiState.communityComposeStoryId = "";
     uiState.communityComposeMentionSheetOpen = false;
     uiState.communityComposeTopicSheetOpen = false;
+    uiState.communityComposeVisibility = "community_only";
     const selectedCommunity = getSelectedCommunity();
     if (selectedCommunity) {
       selectedCommunity.postCount = Math.max(0, Number(selectedCommunity.postCount || 0) + 1);
@@ -5628,8 +5675,7 @@ async function sendMessageToThread(conversationId, text, options = {}) {
 function getActiveThreadForSending() {
   const activeId = getActiveConversationId();
   if (!activeId || !isUuid(activeId)) {
-    uiState.messageFeedback = "请先打开一个真实会话再发送";
-    render();
+    showMessageFeedback("请先打开一个真实会话再发送");
     return "";
   }
   return activeId;
@@ -5649,6 +5695,50 @@ function applySentThreadMessage(activeId, message, fallbackPreviewText = "") {
     const wrap = document.querySelector(".dm-modern-messages");
     if (wrap) wrap.scrollTop = wrap.scrollHeight;
   });
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("INVALID_FILE_DATA"));
+    };
+    reader.onerror = () => reject(new Error("FILE_READ_FAILED"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function compressImageFileToDataUrl(file, {
+  maxSide = 1680,
+  jpegQuality = 0.84,
+  pngKeepThresholdBytes = 2_500_000
+} = {}) {
+  const rawUrl = await fileToDataUrl(file);
+  const img = await new Promise((resolve, reject) => {
+    const node = new Image();
+    node.onload = () => resolve(node);
+    node.onerror = () => reject(new Error("IMAGE_DECODE_FAILED"));
+    node.src = rawUrl;
+  });
+  const originalBytes = Number(file?.size || 0);
+  const width = Number(img.width || 0);
+  const height = Number(img.height || 0);
+  if (!width || !height) return rawUrl;
+  const scale = Math.min(1, maxSide / Math.max(width, height));
+  const targetW = Math.max(1, Math.round(width * scale));
+  const targetH = Math.max(1, Math.round(height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = targetW;
+  canvas.height = targetH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return rawUrl;
+  ctx.drawImage(img, 0, 0, targetW, targetH);
+  const mime = originalBytes > pngKeepThresholdBytes ? "image/jpeg" : (String(file.type || "").toLowerCase().includes("png") ? "image/png" : "image/jpeg");
+  const quality = mime === "image/png" ? undefined : jpegQuality;
+  const compressed = canvas.toDataURL(mime, quality);
+  if (!compressed || compressed.length >= rawUrl.length) return rawUrl;
+  return compressed;
 }
 
 async function loginWithAccountAndSync() {
@@ -7652,6 +7742,8 @@ function pageCommunityGroup() {
 
 function pageCommunityPost() {
   const storyOptions = getCommunityStoryOptions();
+  resolveCommunityComposeTargetId();
+  uiState.communityComposeVisibility = normalizeComposeVisibility(uiState.communityComposeVisibility);
   const mentionCandidates = getCommunityMentionCandidates();
   const topicCandidates = COMMUNITY_TOPIC_SUGGESTIONS;
   const media = Array.isArray(uiState.communityComposeMedia) ? uiState.communityComposeMedia : [];
@@ -7693,7 +7785,13 @@ function pageCommunityPost() {
             .join("")}
         </select>
       </div>
-      <div class="community-setting-row"><span>可见范围</span><button data-action="community-visibility"> ${uiState.communityComposeVisibility}</button></div>
+      <div class="community-setting-row community-story-bind-row">
+        <span>可见范围</span>
+        <select data-field="community-compose-visibility">
+          <option value="community_only" ${normalizeComposeVisibility(uiState.communityComposeVisibility) === "community_only" ? "selected" : ""}>本社区用户</option>
+          <option value="public" ${normalizeComposeVisibility(uiState.communityComposeVisibility) === "public" ? "selected" : ""}>所有用户</option>
+        </select>
+      </div>
       <div class="community-setting-row"><span>同步到精华候选</span><button data-action="community-sync-toggle">${uiState.communityComposeSync ? "开启" : "关闭"}</button></div>
       ${uiState.communityGroupFeedback ? `<div class="msg-action-feedback">${escapeHtml(uiState.communityGroupFeedback)}</div>` : ""}
       <div class="community-compose-bottom-bar">
@@ -11021,11 +11119,6 @@ document.addEventListener("click", (event) => {
       render();
       return;
     }
-    if (action === "community-visibility") {
-      uiState.communityComposeVisibility = uiState.communityComposeVisibility === "公开 · 社区内" ? "仅社区内可见" : "公开 · 社区内";
-      render();
-      return;
-    }
     if (action === "community-create-cover") {
       const index = Number(actionTarget.getAttribute("data-cover"));
       const coverOptions = COMMUNITY_CARD_IMAGES.slice(0, 4);
@@ -12116,73 +12209,93 @@ document.addEventListener("click", (event) => {
 
     if (action === "toggle-follow-author") {
       const profile = uiState.modalProfile;
+      const actionUserId = String(actionTarget.getAttribute("data-user-id") || "").trim();
+      const actionUserName = String(actionTarget.getAttribute("data-user") || "").trim();
       const fallbackUserId = String(uiState.meViewedUserId || "").trim();
       const fallbackUserName = String(uiState.meViewedUserName || "").trim();
-      const targetUserId = String(profile?.id || fallbackUserId || "").trim() || resolveAuthorIdByName(profile?.name || profile?.handle || fallbackUserName);
+      const targetName = String(profile?.name || actionUserName || fallbackUserName || "").trim();
+      const targetHandle = String(profile?.handle || "").trim();
+      const directTargetUserId = String(profile?.id || actionUserId || fallbackUserId || "").trim()
+        || resolveAuthorIdByName(targetName || targetHandle || fallbackUserName)
+        || resolveAuthUserIdByAlias(targetName || targetHandle || fallbackUserName);
       if (!uiState.isLoggedIn || !uiState.currentUserId) {
         uiState.showLoginModal = true;
         render();
         return;
       }
-      if (!targetUserId) {
-        uiState.authorFeedback = "未找到作者，暂时无法关注";
-        render();
-        return;
-      }
-      if (uiState.modalProfile && !uiState.modalProfile.id) uiState.modalProfile.id = targetUserId;
-      if (targetUserId === uiState.currentUserId) {
-        uiState.authorFeedback = "不能关注自己";
-        render();
-        return;
-      }
-      if (!uiState.modalProfile) {
-        uiState.modalProfile = buildAuthorProfileByName(
-          fallbackUserName || AUTHOR_DIRECTORY[targetUserId]?.name || "Drama 用户",
-          targetUserId
-        );
-      }
-      const nextFollow = !Boolean(uiState.modalProfile?.isFollowedByMe);
-      queuePendingFollowOp(targetUserId, nextFollow);
-      persistFollowState(targetUserId, nextFollow);
-      if (uiState.modalProfile) uiState.modalProfile.isFollowedByMe = nextFollow;
-      if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = nextFollow;
-      uiState.isFollowingAuthor = nextFollow;
-      uiState.authorFeedback = "";
-      render();
-      void setUserFollowRelation(targetUserId, nextFollow, { keepalive: true })
-        .then((relation) => {
-          const followedByMe = Boolean(relation?.followedByMe);
-          clearPendingFollowOp(targetUserId);
-          persistFollowState(targetUserId, followedByMe);
-          if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = followedByMe;
-          if (AUTHOR_DIRECTORY[targetUserId]) {
-            AUTHOR_DIRECTORY[targetUserId].followedByMe = followedByMe;
-            if (relation?.targetStats) {
-              AUTHOR_DIRECTORY[targetUserId].stats = {
-                ...AUTHOR_DIRECTORY[targetUserId].stats,
-                fansCount: toMetricCount(relation.targetStats.fansCount),
-                followsCount: toMetricCount(relation.targetStats.followsCount)
-              };
-            }
-          }
-          if (relation?.meStats) {
-            uiState.meStats.fansCount = toMetricCount(relation.meStats.fansCount);
-          }
-          uiState.isFollowingAuthor = followedByMe;
-          uiState.authorFeedback = "";
-          return bootstrapClientDataFull(uiState.currentUserId);
-        })
-        .then(() => {
+      const runFollowToggle = (targetUserId) => {
+        if (!targetUserId) {
+          uiState.authorFeedback = "未找到作者，暂时无法关注";
           render();
+          return;
+        }
+        if (uiState.modalProfile && !uiState.modalProfile.id) uiState.modalProfile.id = targetUserId;
+        if (targetUserId === uiState.currentUserId) {
+          uiState.authorFeedback = "不能关注自己";
+          render();
+          return;
+        }
+        if (!uiState.modalProfile) {
+          uiState.modalProfile = buildAuthorProfileByName(
+            fallbackUserName || actionUserName || AUTHOR_DIRECTORY[targetUserId]?.name || "Drama 用户",
+            targetUserId
+          );
+        }
+        const nextFollow = !Boolean(uiState.modalProfile?.isFollowedByMe);
+        queuePendingFollowOp(targetUserId, nextFollow);
+        persistFollowState(targetUserId, nextFollow);
+        if (uiState.modalProfile) uiState.modalProfile.isFollowedByMe = nextFollow;
+        if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = nextFollow;
+        uiState.isFollowingAuthor = nextFollow;
+        uiState.authorFeedback = "";
+        render();
+        void setUserFollowRelation(targetUserId, nextFollow, { keepalive: true })
+          .then((relation) => {
+            const followedByMe = Boolean(relation?.followedByMe);
+            clearPendingFollowOp(targetUserId);
+            persistFollowState(targetUserId, followedByMe);
+            if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = followedByMe;
+            if (AUTHOR_DIRECTORY[targetUserId]) {
+              AUTHOR_DIRECTORY[targetUserId].followedByMe = followedByMe;
+              if (relation?.targetStats) {
+                AUTHOR_DIRECTORY[targetUserId].stats = {
+                  ...AUTHOR_DIRECTORY[targetUserId].stats,
+                  fansCount: toMetricCount(relation.targetStats.fansCount),
+                  followsCount: toMetricCount(relation.targetStats.followsCount)
+                };
+              }
+            }
+            if (relation?.meStats) {
+              uiState.meStats.fansCount = toMetricCount(relation.meStats.fansCount);
+            }
+            uiState.isFollowingAuthor = followedByMe;
+            uiState.authorFeedback = "";
+            return bootstrapClientDataFull(uiState.currentUserId);
+          })
+          .then(() => {
+            render();
+          })
+          .catch((error) => {
+            const msg = error instanceof Error ? error.message : "";
+            if (msg && msg !== "NETWORK_UNREACHABLE") clearPendingFollowOp(targetUserId);
+            persistFollowState(targetUserId, !nextFollow);
+            if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = !nextFollow;
+            if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = !nextFollow;
+            uiState.isFollowingAuthor = !nextFollow;
+            uiState.authorFeedback = `操作失败：${error instanceof Error ? error.message : "unknown"}`;
+            render();
+          });
+      };
+      if (directTargetUserId) {
+        runFollowToggle(directTargetUserId);
+        return;
+      }
+      void resolveAuthorIdForAction({ userId: actionUserId, name: targetName, handle: targetHandle })
+        .then((resolvedId) => {
+          runFollowToggle(resolvedId);
         })
-        .catch((error) => {
-          const msg = error instanceof Error ? error.message : "";
-          if (msg && msg !== "NETWORK_UNREACHABLE") clearPendingFollowOp(targetUserId);
-          persistFollowState(targetUserId, !nextFollow);
-          if (uiState.modalProfile?.id === targetUserId) uiState.modalProfile.isFollowedByMe = !nextFollow;
-          if (AUTHOR_DIRECTORY[targetUserId]) AUTHOR_DIRECTORY[targetUserId].followedByMe = !nextFollow;
-          uiState.isFollowingAuthor = !nextFollow;
-          uiState.authorFeedback = `操作失败：${error instanceof Error ? error.message : "unknown"}`;
+        .catch(() => {
+          uiState.authorFeedback = "未找到作者，暂时无法关注";
           render();
         });
       return;
@@ -12249,26 +12362,74 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "me-visitor-chat") {
-      const targetUserId = String(uiState.meViewedUserId || uiState.modalProfile?.id || "").trim();
-      const targetName = String(uiState.meViewedUserName || uiState.modalProfile?.name || "对方").trim();
-      if (!targetUserId) {
-        uiState.messageFeedback = "未找到用户，无法发起私聊";
-        render();
+      const actionUserId = String(actionTarget.getAttribute("data-user-id") || "").trim();
+      const actionUserName = String(actionTarget.getAttribute("data-user") || "").trim();
+      const targetName = String(actionUserName || uiState.meViewedUserName || uiState.modalProfile?.name || "对方").trim();
+      const targetHandle = String(uiState.modalProfile?.handle || "").trim();
+      const directTargetUserId = String(actionUserId || uiState.meViewedUserId || uiState.modalProfile?.id || "").trim();
+      const openDm = (targetUserId) => {
+        if (!targetUserId) {
+          uiState.messageFeedback = "未找到用户，无法发起私聊";
+          render();
+          return;
+        }
+        if (targetUserId === uiState.currentUserId) {
+          uiState.messageFeedback = "不能给自己发私信";
+          render();
+          return;
+        }
+        void openOrCreateDirectThread(targetUserId, targetName).catch((error) => {
+          uiState.messageFeedback = `发私信失败：${error instanceof Error ? error.message : "unknown"}`;
+          render();
+        });
+      };
+      if (directTargetUserId) {
+        openDm(directTargetUserId);
         return;
       }
-      void openOrCreateDirectThread(targetUserId, targetName).catch((error) => {
-        uiState.messageFeedback = `发私信失败：${error instanceof Error ? error.message : "unknown"}`;
-        render();
-      });
+      void resolveAuthorIdForAction({ userId: actionUserId, name: targetName, handle: targetHandle })
+        .then((resolvedId) => {
+          openDm(resolvedId);
+        })
+        .catch(() => {
+          uiState.messageFeedback = "未找到用户，无法发起私聊";
+          render();
+        });
       return;
     }
     if (action === "open-author-dm") {
       const targetName = String(actionTarget.getAttribute("data-user") || uiState.modalProfile?.name || "对方").trim();
-      const targetUserId = String(actionTarget.getAttribute("data-user-id") || uiState.modalProfile?.id || "").trim();
-      void openOrCreateDirectThread(targetUserId, targetName).catch((error) => {
-        uiState.messageFeedback = `发私信失败：${error instanceof Error ? error.message : "unknown"}`;
-        render();
-      });
+      const targetHandle = String(uiState.modalProfile?.handle || "").trim();
+      const actionUserId = String(actionTarget.getAttribute("data-user-id") || "").trim();
+      const directTargetUserId = String(actionUserId || uiState.modalProfile?.id || "").trim();
+      const openDm = (targetUserId) => {
+        if (!targetUserId) {
+          uiState.messageFeedback = "未找到用户，无法发起私聊";
+          render();
+          return;
+        }
+        if (targetUserId === uiState.currentUserId) {
+          uiState.messageFeedback = "不能给自己发私信";
+          render();
+          return;
+        }
+        void openOrCreateDirectThread(targetUserId, targetName).catch((error) => {
+          uiState.messageFeedback = `发私信失败：${error instanceof Error ? error.message : "unknown"}`;
+          render();
+        });
+      };
+      if (directTargetUserId) {
+        openDm(directTargetUserId);
+        return;
+      }
+      void resolveAuthorIdForAction({ userId: actionUserId, name: targetName, handle: targetHandle })
+        .then((resolvedId) => {
+          openDm(resolvedId);
+        })
+        .catch(() => {
+          uiState.messageFeedback = "未找到用户，无法发起私聊";
+          render();
+        });
       return;
     }
     if (action === "open-user-modal") {
@@ -12708,6 +12869,10 @@ document.addEventListener("change", (event) => {
     uiState.communityComposeStoryId = target.value;
     return;
   }
+  if (target instanceof HTMLSelectElement && target.getAttribute("data-field") === "community-compose-visibility") {
+    uiState.communityComposeVisibility = normalizeComposeVisibility(target.value);
+    return;
+  }
   if (target instanceof HTMLSelectElement && target.getAttribute("data-field") === "workshop-template-id") {
     if (WORKSHOP_FORCE_CUSTOM_MODES.has(uiState.workshopMode)) return;
     uiState.workshopSelectedTemplateId[uiState.workshopMode] = target.value;
@@ -12763,28 +12928,25 @@ document.addEventListener("change", (event) => {
     }
     const activeId = getActiveThreadForSending();
     if (!activeId) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const imageUrl = typeof reader.result === "string" ? reader.result : "";
-      if (!imageUrl) return;
-      uiState.messageEmojiPanelOpen = false;
-      render();
-      void sendMessageToThread(activeId, "[图片]", {
-        messageType: "image",
-        payload: {
-          url: imageUrl,
-          name: file.name || "image"
-        }
-      })
-        .then((message) => {
-          applySentThreadMessage(activeId, message, "[图片]");
-        })
-        .catch((err) => {
-          uiState.messageFeedback = `发送失败：${err instanceof Error ? err.message : "unknown"}`;
-          render();
+    uiState.messageEmojiPanelOpen = false;
+    render();
+    void compressImageFileToDataUrl(file)
+      .then((imageUrl) => {
+        if (!imageUrl) throw new Error("IMAGE_ENCODE_FAILED");
+        return sendMessageToThread(activeId, "[图片]", {
+          messageType: "image",
+          payload: {
+            url: imageUrl,
+            name: file.name || "image"
+          }
         });
-    };
-    reader.readAsDataURL(file);
+      })
+      .then((message) => {
+        applySentThreadMessage(activeId, message, "[图片]");
+      })
+      .catch((err) => {
+        showMessageFeedback(`发送失败：${err instanceof Error ? err.message : "unknown"}`);
+      });
     return;
   }
   if (field !== "community-create-cover-file" && field !== "community-create-avatar-file" && field !== "me-hero-cover-file") return;

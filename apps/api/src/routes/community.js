@@ -1,4 +1,5 @@
 import { json, parseBody } from "../core/http.js";
+import { resolveSessionUser } from "../core/session.js";
 import {
   createCommunity,
   joinCommunity,
@@ -124,7 +125,10 @@ export async function handleCommunity(req, res, pathname) {
     const params = req.url?.includes("?") ? new URL(req.url, "http://127.0.0.1").searchParams : new URLSearchParams();
     const communityId = String(params.get("communityId") || "").trim();
     const limit = Number(params.get("limit") || "") || 100;
-    const posts = await listPosts({ communityId, limit });
+    const viewerIdQuery = String(params.get("viewerId") || "").trim();
+    const sessionUser = viewerIdQuery ? null : await resolveSessionUser(req);
+    const viewerId = viewerIdQuery || String(sessionUser?.id || "").trim() || null;
+    const posts = await listPosts({ communityId, limit, viewerId });
     return json(res, 200, { posts });
   }
 
