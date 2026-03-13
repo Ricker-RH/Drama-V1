@@ -663,6 +663,45 @@ function upsertFeedDataFromPublishedWorldCard(worldCard = {}) {
   else FEED_DATA.unshift(feedItem);
 }
 
+function ensurePublishedCreatorWorksInFeedData(creatorWorks = [], authorName = "") {
+  creatorWorks.forEach((item) => {
+    const worldId = String(item?.worldId || "").trim();
+    if (!worldId) return;
+    if (FEED_DATA.some((x) => String(x?.id || "") === worldId)) return;
+    FEED_DATA.unshift({
+      id: worldId,
+      format: item.mode === "short_narrative" ? "短剧" : item.mode === "virtual_character" ? "角色" : "长剧",
+      theme: "剧情向",
+      setting: "原创",
+      background: "原创世界",
+      recommend: "已发布",
+      time: "刚刚更新",
+      title: String(item.title || "未命名作品"),
+      subtitle: String(item.subtitle || ""),
+      summary: String(item.summary || ""),
+      overview: String(item.summary || ""),
+      tags: [item.mode === "short_narrative" ? "短叙事" : item.mode === "virtual_character" ? "虚拟人物" : "长叙事"],
+      author: String(authorName || uiState.profile?.name || "Drama 用户"),
+      authorId: String(uiState.currentUserId || ""),
+      mode: String(item.mode || "long_narrative"),
+      chapter: String(item.subtitle || "序章"),
+      mainQuest: String(item.summary || ""),
+      npc: "",
+      clues: "",
+      openingSummary: "",
+      playHook: "",
+      cover: "linear-gradient(180deg,#c4b5fd 0%,#6d28d9 100%)",
+      like: "0",
+      star: "0",
+      comment: "0",
+      heat: "0.0w",
+      isTest: false,
+      liked: false,
+      favorited: false
+    });
+  });
+}
+
 function applyBootstrapData(payload, sourceMode = "unknown") {
   replaceArray(FEED_DATA, payload?.feedData || []);
   replaceArray(DRAMA_STORY_IMAGES, payload?.dramaStoryImages || []);
@@ -8166,7 +8205,13 @@ function pageMe() {
       .filter(Boolean)
   );
   const ownFeed = tab === "works"
-    ? feed.filter((x) => !publishedWorldIdSet.has(String(x.id || "").trim()))
+    ? feed.filter((x) => {
+        const id = String(x.id || "").trim();
+        const status = String(x.status || "").trim();
+        const isDraft = Boolean(x.draft) || status === "draft" || status === "unpublished";
+        if (isDraft) return false;
+        return !publishedWorldIdSet.has(id);
+      })
     : feed;
   const draftCardMap = new Map();
   draftCreatorWorks.forEach((item) => {
@@ -8204,6 +8249,7 @@ function pageMe() {
   const avatarText = getAvatarText(displayedName);
   const coverClass = uiState.meHeroCover ? "me-hero me-hero-cover" : "me-hero";
   const coverStyle = uiState.meHeroCover ? `style='--me-hero-cover:${uiState.meHeroCover};'` : "";
+  if (!viewingOther) ensurePublishedCreatorWorksInFeedData(publishedCreatorWorks, displayedName);
   const meMenuGroups = [
     ["添加好友", "创作者中心"],
     ["我的草稿", "浏览记录", "我的下载"],
@@ -8326,7 +8372,7 @@ function pageMe() {
                   ...publishedCreatorWorks.map(
                     (x) => `
               <article class="home-card me-home-card creator-work-card" ${
-                x.worldId && hasWorldCard(x.worldId)
+                x.worldId
                   ? `data-action="open-world-detail" data-id="${x.worldId}"`
                   : 'data-action="noop"'
               }>
@@ -8336,7 +8382,7 @@ function pageMe() {
                   <h4>${x.title}</h4>
                   <div class="home-tags">
                     <span>${formatModeTag(x.mode)}</span>
-                    <span>${x.status === "published" ? "已发布" : "草稿"}</span>
+                    <span>已发布</span>
                   </div>
                   <div class="home-author">${escapeHtml(displayedName)}</div>
                   <div class="home-metrics">
