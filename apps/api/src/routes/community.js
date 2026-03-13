@@ -84,21 +84,43 @@ export async function handleCommunity(req, res, pathname) {
 
   if (req.method === "POST" && pathname === "/api/v1/community/posts") {
     const body = await parseBody(req);
-    if (!body.authorId || !body.content) {
-      return json(res, 400, { code: "INVALID_INPUT", message: "authorId and content are required" });
+    const communityId = String(body.communityId || "").trim();
+    const authorId = String(body.authorId || "").trim();
+    const content = String(body.content || "").trim();
+    const linkedWorldCardId = String(body.linkedWorldCardId || "").trim();
+    const postType = String(body.postType || "text").trim() || "text";
+    const visibility = String(body.visibility || "public").trim() || "public";
+    const isFeatured = Boolean(body.isFeatured);
+
+    if (!communityId || !authorId || !content) {
+      return json(res, 400, {
+        code: "INVALID_INPUT",
+        message: "communityId, authorId and content are required"
+      });
     }
 
     const post = await createPost({
-      authorId: body.authorId,
-      content: body.content
+      communityId,
+      authorId,
+      content,
+      linkedWorldCardId: linkedWorldCardId || null,
+      postType,
+      visibility,
+      isFeatured
     });
+    if (!post?.id) {
+      return json(res, 500, { code: "POST_CREATE_FAILED", message: "create post failed" });
+    }
     invalidateBootstrapCoreCache();
 
     return json(res, 201, { post });
   }
 
   if (req.method === "GET" && pathname === "/api/v1/community/posts") {
-    const posts = await listPosts();
+    const params = req.url?.includes("?") ? new URL(req.url, "http://127.0.0.1").searchParams : new URLSearchParams();
+    const communityId = String(params.get("communityId") || "").trim();
+    const limit = Number(params.get("limit") || "") || 100;
+    const posts = await listPosts({ communityId, limit });
     return json(res, 200, { posts });
   }
 

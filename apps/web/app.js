@@ -4548,6 +4548,79 @@ async function publishCommunityCreateAndPersist() {
   }
 }
 
+function normalizeCommunityPostFromApi(post = {}) {
+  const text = String(post?.content || "").trim();
+  const title = text ? text.slice(0, 28) : "社区动态";
+  return {
+    id: String(post?.id || `cp_${Date.now()}`),
+    user: String(post?.author_name || post?.authorName || "").trim() || "匿名",
+    time: formatTimeText(post?.created_at || post?.createdAt || Date.now()),
+    title,
+    text,
+    tag: Boolean(post?.is_featured || post?.isFeatured) ? "精华" : "动态",
+    likes: Number(post?.likes_count || post?.likes || 0),
+    stars: Math.max(0, Math.floor(Number(post?.likes_count || post?.likes || 0) * 0.22)),
+    comments: Number(post?.comments_count || post?.comments || 0),
+    featured: Boolean(post?.is_featured || post?.isFeatured),
+    story: String(post?.world_title || post?.worldTitle || "").trim() || undefined,
+    storyId: String(post?.linked_world_card_id || post?.storyId || "").trim() || undefined
+  };
+}
+
+async function publishCommunityPostAndPersist() {
+  const text = String(uiState.communityComposeText || "").trim();
+  if (!text) return;
+  if (!uiState.isLoggedIn || !uiState.currentUserId) {
+    uiState.communityGroupFeedback = "请先登录后再发布";
+    setPostLoginRedirectHash("#/community/post");
+    window.location.hash = "#/auth/login";
+    render();
+    return;
+  }
+  const communityId = String(uiState.selectedCommunityId || "").trim();
+  if (!communityId || !isUuid(communityId)) {
+    uiState.communityGroupFeedback = "未选择有效社区，无法发布";
+    render();
+    return;
+  }
+
+  uiState.communityPostPublished = true;
+  uiState.communityGroupFeedback = "";
+  render();
+  try {
+    const data = await apiJson("/community/posts", {
+      communityId,
+      authorId: uiState.currentUserId,
+      content: text,
+      linkedWorldCardId: uiState.communityComposeStoryId || null,
+      postType: "text",
+      visibility: "public"
+    });
+    const nextPost = normalizeCommunityPostFromApi(data?.post || {});
+    if (!COMMUNITY_POSTS[communityId]) COMMUNITY_POSTS[communityId] = [];
+    COMMUNITY_POSTS[communityId].unshift(nextPost);
+    uiState.selectedCommunityPostId = nextPost.id;
+    uiState.communityComposeText = "";
+    uiState.communityComposeStoryId = "";
+    const selectedCommunity = getSelectedCommunity();
+    if (selectedCommunity) {
+      selectedCommunity.postCount = Math.max(0, Number(selectedCommunity.postCount || 0) + 1);
+      selectedCommunity.updated = "刚刚";
+      selectedCommunity.updatedHours = 0;
+    }
+    setTimeout(() => {
+      uiState.communityPostPublished = false;
+      render();
+    }, 1000);
+    void bootstrapClientData(uiState.currentUserId).catch(() => {});
+  } catch (error) {
+    uiState.communityPostPublished = false;
+    uiState.communityGroupFeedback = error instanceof Error ? error.message : "发布失败，请稍后重试";
+  } finally {
+    render();
+  }
+}
+
 async function joinSelectedCommunity() {
   const c = getSelectedCommunity();
   if (!c?.id) return;
@@ -10691,37 +10764,7 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (action === "publish-community-post") {
-      const text = (uiState.communityComposeText || "").trim();
-      if (!text) return;
-      const cid = uiState.selectedCommunityId || "c_1";
-      const storyTitle = uiState.communityComposeStoryId
-        ? FEED_DATA.find((x) => x.id === uiState.communityComposeStoryId)?.title
-        : "";
-      const post = {
-        id: `cp_custom_${Date.now()}`,
-        user: uiState.isLoggedIn ? "我" : "游客",
-        time: "刚刚",
-        title: "新发布动态",
-        text,
-        tag: "动态",
-        likes: 0,
-        stars: 0,
-        comments: 0,
-        featured: false,
-        story: storyTitle || undefined,
-        storyId: uiState.communityComposeStoryId || undefined
-      };
-      if (!COMMUNITY_POSTS[cid]) COMMUNITY_POSTS[cid] = [];
-      COMMUNITY_POSTS[cid].unshift(post);
-      uiState.selectedCommunityPostId = post.id;
-      uiState.communityComposeText = "";
-      uiState.communityComposeStoryId = "";
-      uiState.communityPostPublished = true;
-      render();
-      setTimeout(() => {
-        uiState.communityPostPublished = false;
-        render();
-      }, 1200);
+      void publishCommunityPostAndPersist();
       return;
     }
     if (action === "open-community-post") {

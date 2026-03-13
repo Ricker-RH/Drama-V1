@@ -1,14 +1,53 @@
 import { query } from "../db/client.js";
 
-export async function createPost({ authorId, content }) {
-  const result = await query(
-    `insert into community_posts(author_id, content)
-     values ($1, $2)
-     returning id, author_id, content, likes_count, created_at`,
-    [authorId, content]
+export async function createPost({
+  communityId,
+  authorId,
+  content,
+  linkedWorldCardId = null,
+  postType = "text",
+  visibility = "public",
+  isFeatured = false
+}) {
+  const postRes = await query(
+    `with inserted as (
+      insert into community_posts(
+        community_id, author_id, content, linked_world_card_id,
+        post_type, visibility, is_featured, status
+      )
+      values (
+        $1::uuid, $2::uuid, $3, $4::uuid,
+        $5, $6, $7::boolean, 'published'
+      )
+      returning id, community_id, author_id, content, linked_world_card_id,
+        likes_count, comments_count, shares_count, is_featured, status, created_at
+    ),
+    updated_community as (
+      update communities c
+      set post_count = (
+            select count(*)
+            from community_posts cp
+            where cp.community_id = c.id
+              and cp.status = 'published'
+              and cp.deleted_at is null
+          ),
+          latest_post_at = now(),
+          last_active_at = now(),
+          updated_at = now()
+      where c.id = $1::uuid
+      returning c.id
+    )
+    select
+      i.*,
+      u.nickname as author_name,
+      wc.title as world_title
+    from inserted i
+    join users u on u.id = i.author_id
+    left join world_cards wc on wc.id = i.linked_world_card_id`,
+    [communityId, authorId, content, linkedWorldCardId || null, postType, visibility, Boolean(isFeatured)]
   );
 
-  return result.rows[0];
+  return postRes.rows[0] || null;
 }
 
 export async function createCommunity({
@@ -141,13 +180,40 @@ export async function joinCommunity({ communityId, userId }) {
   return result.rows[0] || null;
 }
 
-export async function listPosts() {
-  const result = await query(
-    `select id, author_id, content, likes_count, created_at
-     from community_posts
-     order by created_at desc
-     limit 100`
-  );
+export async function listPosts({ communityId = "", limit = 100 } = {}) {
+  const hasCommunity = String(communityId || "").trim().length > 0;
+  const result = hasCommunity
+    ? await query(
+      `select
+        cp.id, cp.community_id, cp.author_id, cp.content, cp.likes_count, cp.comments_count, cp.shares_count,
+        cp.is_featured, cp.linked_world_card_id, cp.created_at,
+        u.nickname as author_name,
+        wc.title as world_title
+       from community_posts cp
+       join users u on u.id = cp.author_id
+       left join world_cards wc on wc.id = cp.linked_world_card_id
+       where cp.status = 'published'
+         and cp.deleted_at is null
+         and cp.community_id = $1::uuid
+       order by cp.created_at desc
+       limit $2`,
+      [communityId, Math.max(1, Math.min(200, Number(limit) || 100))]
+    )
+    : await query(
+      `select
+        cp.id, cp.community_id, cp.author_id, cp.content, cp.likes_count, cp.comments_count, cp.shares_count,
+        cp.is_featured, cp.linked_world_card_id, cp.created_at,
+        u.nickname as author_name,
+        wc.title as world_title
+       from community_posts cp
+       join users u on u.id = cp.author_id
+       left join world_cards wc on wc.id = cp.linked_world_card_id
+       where cp.status = 'published'
+         and cp.deleted_at is null
+       order by cp.created_at desc
+       limit $1`,
+      [Math.max(1, Math.min(200, Number(limit) || 100))]
+    );
 
-  return result.rows;
+  return result.rows || [];
 }
