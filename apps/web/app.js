@@ -6503,6 +6503,7 @@ function buildCreatorWorks() {
       const p = item.publishInfo || {};
       return {
         id: item.id,
+        worldId: item.worldCardId || "",
         mode: item.mode,
         title: p.title || item.title || "未命名卡片",
         subtitle: p.chapter || getWorkshopModeLabel(item.mode),
@@ -8156,26 +8157,19 @@ function pageMe() {
     ? uiState.meContentTab
     : "works";
   const creatorWorks = buildCreatorWorks();
-  const draftCreatorWorks = creatorWorks;
+  const draftCreatorWorks = creatorWorks.filter((x) => x.status !== "published");
   const publishedCreatorWorks = creatorWorks.filter((x) => x.status === "published");
-  const feedWorks = Array.isArray(ME_CONTENT_LIBRARY.works) ? ME_CONTENT_LIBRARY.works : [];
   const feed = ME_CONTENT_LIBRARY[tab] || [];
-  const creatorTitleSet = new Set(publishedCreatorWorks.map((x) => x.title));
+  const publishedWorldIdSet = new Set(
+    publishedCreatorWorks
+      .map((x) => String(x.worldId || "").trim())
+      .filter(Boolean)
+  );
   const ownFeed = tab === "works"
-    ? feed.filter((x) => !creatorTitleSet.has(x.title))
+    ? feed.filter((x) => !publishedWorldIdSet.has(String(x.id || "").trim()))
     : feed;
-  const feedDraftFallback = viewingOther
-    ? []
-    : feedWorks.map((x, idx) => ({
-        id: x.id || `feed_draft_${idx + 1}`,
-        mode: "long_narrative",
-        title: x.title || `草稿 ${idx + 1}`,
-        subtitle: x.meta || "创作草稿",
-        summary: x.stat || "",
-        status: "draft"
-      }));
   const draftCardMap = new Map();
-  [...draftCreatorWorks, ...feedDraftFallback].forEach((item) => {
+  draftCreatorWorks.forEach((item) => {
     const key = String(item.id || item.title || Math.random());
     if (!draftCardMap.has(key)) draftCardMap.set(key, item);
   });
@@ -8315,7 +8309,7 @@ function pageMe() {
                   <h4>${x.title}</h4>
                   <div class="home-tags">
                     <span>${formatModeTag(x.mode)}</span>
-                    <span>${x.status === "published" ? "已发布（保留草稿）" : "草稿"}</span>
+                    <span>草稿</span>
                   </div>
                   <div class="home-author">${escapeHtml(displayedName)}</div>
                   <div class="home-metrics">
@@ -8331,9 +8325,12 @@ function pageMe() {
               ? [
                   ...publishedCreatorWorks.map(
                     (x) => `
-              <article class="home-card me-home-card creator-work-card" data-action="noop">
+              <article class="home-card me-home-card creator-work-card" ${
+                x.worldId && hasWorldCard(x.worldId)
+                  ? `data-action="open-world-detail" data-id="${x.worldId}"`
+                  : 'data-action="noop"'
+              }>
                 <div class="home-cover creator-cover mode-${x.mode}">
-                  ${x.status !== "published" ? '<div class="creator-draft-mask"><span>草稿箱</span></div>' : ""}
                 </div>
                 <div class="home-body">
                   <h4>${x.title}</h4>
