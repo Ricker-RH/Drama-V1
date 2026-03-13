@@ -5477,18 +5477,6 @@ body.world-detail-route .web-root {
   padding-bottom: calc(112px + env(safe-area-inset-bottom));
 }
 
-.community-compose-top {
-  display: grid;
-  grid-template-columns: 36px 1fr 36px;
-  align-items: center;
-}
-
-.community-compose-top h2 {
-  margin: 0;
-  text-align: center;
-  font-size: 20px;
-}
-
 .community-compose-media-strip {
   display: flex;
   gap: 10px;
@@ -5657,6 +5645,13 @@ body.world-detail-route .web-root {
 
 .community-compose-sheet-list {
   overflow: auto;
+}
+
+.community-compose-sheet-empty {
+  margin: 0;
+  padding: 18px 14px;
+  color: #6b7280;
+  font-size: 14px;
 }
 
 .community-compose-sheet-list button {

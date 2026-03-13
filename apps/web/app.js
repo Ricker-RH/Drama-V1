@@ -2371,19 +2371,23 @@ function getCommunityPosts(cid) {
 }
 
 function getCommunityMentionCandidates() {
-  if (Array.isArray(COMMUNITY_MEMBERS) && COMMUNITY_MEMBERS.length) {
-    return COMMUNITY_MEMBERS.slice(0, 20).map((m, idx) => ({
-      id: String(m.id || `${idx + 1}`),
-      name: String(m.name || `成员${idx + 1}`).trim() || `成员${idx + 1}`,
-      avatar: String(m.name || "成").trim().slice(0, 1) || "成"
-    }));
-  }
-  return [
-    { id: "u1", name: "Alina", avatar: "A" },
-    { id: "u2", name: "Leon", avatar: "L" },
-    { id: "u3", name: "小北", avatar: "小" },
-    { id: "u4", name: "阿青", avatar: "阿" }
-  ];
+  const uid = String(uiState.currentUserId || "").trim();
+  const friends = ME_RELATION_USERS
+    .filter((x) => {
+      const id = String(x?.id || "").trim();
+      if (!id || id === uid) return false;
+      return Boolean(x?.isFollowing || x?.tab === "关注" || x?.tab === "朋友");
+    })
+    .slice(0, 60)
+    .map((x) => {
+      const name = String(x?.name || x?.nickname || "").trim() || "好友";
+      return {
+        id: String(x?.id || "").trim(),
+        name,
+        avatar: name.slice(0, 1) || "友"
+      };
+    });
+  return friends;
 }
 
 function appendTextTokenWithSpace(base, token) {
@@ -7656,11 +7660,6 @@ function pageCommunityPost() {
     && !uiState.communityPostPublished;
   return renderExploreShell(`
     <section class="community-page community-form community-compose-page">
-      <div class="community-compose-top">
-        <button class="community-compose-back unified-back-btn" data-action="go-back" aria-label="返回">←</button>
-        <h2>发动态</h2>
-        <div></div>
-      </div>
       <div class="community-compose-media-strip">
         ${media
           .map(
@@ -7682,7 +7681,6 @@ function pageCommunityPost() {
         ${uiState.communityComposeMentions.map((x) => `<span class="mention">@${escapeHtml(x)}</span>`).join("")}
       </div>
       <div class="community-chip-row community-compose-toolbar">
-        <button data-action="community-compose-pick-media">图片</button>
         <button data-action="community-compose-open-mentions">@成员</button>
         <button data-action="community-compose-open-topics">#话题</button>
       </div>
@@ -7710,12 +7708,16 @@ function pageCommunityPost() {
           <div class="community-compose-sheet" data-action="noop">
             <header><h4>@成员</h4><button data-action="community-compose-close-sheet">完成</button></header>
             <div class="community-compose-sheet-list">
-              ${mentionCandidates.map((m) => `
+              ${
+                mentionCandidates.length
+                  ? mentionCandidates.map((m) => `
                 <button data-action="community-compose-pick-mention" data-name="${escapeHtml(m.name)}">
                   <span class="avatar">${escapeHtml(m.avatar)}</span>
                   <em>${escapeHtml(m.name)}</em>
                 </button>
-              `).join("")}
+              `).join("")
+                  : `<p class="community-compose-sheet-empty">暂无可@好友（先去关注或互关）</p>`
+              }
             </div>
           </div>
         </div>
@@ -9839,7 +9841,8 @@ document.addEventListener("click", (event) => {
   const profileAvatarTrigger = event.target.closest(".user-avatar-click");
   if (profileAvatarTrigger) {
     const userName = resolveUserNameFromNode(profileAvatarTrigger);
-    openAuthorProfileByName(userName);
+    const userId = resolveUserIdFromNode(profileAvatarTrigger);
+    openAuthorProfileByName(userName, userId);
     render();
     return;
   }
@@ -12270,7 +12273,8 @@ document.addEventListener("click", (event) => {
     }
     if (action === "open-user-modal") {
       const userName = resolveUserNameFromNode(actionTarget) || actionTarget.getAttribute("data-user") || "";
-      openAuthorProfileByName(String(userName).trim());
+      const userId = resolveUserIdFromNode(actionTarget);
+      openAuthorProfileByName(String(userName).trim(), userId);
       render();
       return;
     }
