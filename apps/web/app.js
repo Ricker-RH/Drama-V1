@@ -378,6 +378,7 @@ const uiState = {
   selectedMessageId: "",
   messageThreadDraft: "",
   messageThreadToolsOpen: false,
+  messageEmojiPanelOpen: false,
   messageThreadMenuOpen: false,
   messageThreadAutoScrollOnEnter: false,
   messageThreadForceBottomUntil: 0,
@@ -5377,6 +5378,32 @@ async function sendMessageToThread(conversationId, text, options = {}) {
   return data?.message || null;
 }
 
+function getActiveThreadForSending() {
+  const activeId = getActiveConversationId();
+  if (!activeId || !isUuid(activeId)) {
+    uiState.messageFeedback = "请先打开一个真实会话再发送";
+    render();
+    return "";
+  }
+  return activeId;
+}
+
+function applySentThreadMessage(activeId, message, fallbackPreviewText = "") {
+  upsertThreadMessageFromServer(activeId, message || {}, uiState.currentUserId);
+  const preview = String(message?.content || fallbackPreviewText || "").trim() || "新消息";
+  updateMessageInboxPreview(activeId, preview, {
+    time: formatThreadClock(message?.created_at),
+    createdAt: String(message?.created_at || "")
+  });
+  markMessageRead(activeId);
+  uiState.messageReadAckConversationId = "";
+  render();
+  requestAnimationFrame(() => {
+    const wrap = document.querySelector(".dm-modern-messages");
+    if (wrap) wrap.scrollTop = wrap.scrollHeight;
+  });
+}
+
 async function loginWithAccountAndSync() {
   const account = String(uiState.loginAccount || "").trim();
   const password = String(uiState.loginPassword || "");
@@ -5721,8 +5748,24 @@ function normalizeStoryCardPayload(payload = {}) {
   return { worldId, title, desc, author };
 }
 
+const MESSAGE_EMOJI_PACK = ["😀", "😂", "😍", "🥹", "😎", "🤔", "😭", "😡", "👍", "🙏", "🎉", "❤️"];
+
 function renderThreadMessageBubble(message) {
   const type = String(message?.type || "text");
+  if (type === "image") {
+    const imageUrl = String(message?.payload?.url || "").trim();
+    if (imageUrl) {
+      return `
+        <div class="dm-modern-bubble dm-media-bubble">
+          <img src="${escapeHtml(imageUrl)}" alt="聊天图片" />
+        </div>
+      `;
+    }
+  }
+  if (type === "emoji" || type === "sticker") {
+    const emoji = String(message?.payload?.emoji || message?.text || "").trim() || "😀";
+    return `<div class="dm-modern-bubble dm-emoji-bubble">${escapeHtml(emoji)}</div>`;
+  }
   const cardLike = type === "story_card" || type === "card";
   if (!cardLike) {
     return `<div class="dm-modern-bubble">${escapeHtml(String(message?.text || ""))}</div>`;
@@ -5810,25 +5853,22 @@ function pageDirectMessage() {
           ${buildThreadMessagesHtml(activeId, chatMeta, myAvatarText)}
         </div>
         <div class="dm-modern-input-wrap dm-modern-input-wrap-dark">
-          <button class="dm-plus-btn" data-action="toggle-message-thread-tools">＋</button>
+          <button class="dm-attach-btn image" data-action="message-open-image-picker" aria-label="发送图片">🖼</button>
+          <button class="dm-attach-btn emoji" data-action="toggle-message-emoji-panel" aria-label="打开表情">😊</button>
+          <input type="file" accept="image/*" data-field="message-thread-image-file" class="dm-hidden-file-input" />
           <input data-field="message-thread-draft" value="${escapeHtml(uiState.messageThreadDraft)}" placeholder="发消息..." />
           <button class="dm-send-btn dm-send-btn-dark" data-action="message-thread-send">发送</button>
         </div>
-        ${uiState.messageFeedback ? `<div class="msg-action-feedback">${uiState.messageFeedback}</div>` : ""}
         ${
-          uiState.messageThreadToolsOpen
+          uiState.messageEmojiPanelOpen
             ? `
-          <div class="dm-tools-grid">
-            <button data-action="message-tool" data-label="相册">相册</button>
-            <button data-action="message-tool" data-label="拍照">拍照</button>
-            <button data-action="message-tool" data-label="语音通话">语音通话</button>
-            <button data-action="message-tool" data-label="分享笔记">分享笔记</button>
-            <button data-action="message-tool" data-label="便利贴">便利贴</button>
-            <button data-action="message-tool" data-label="地图">地图</button>
+          <div class="dm-emoji-panel">
+            ${MESSAGE_EMOJI_PACK.map((emoji) => `<button data-action="message-send-emoji" data-emoji="${emoji}">${emoji}</button>`).join("")}
           </div>
         `
             : ""
         }
+        ${uiState.messageFeedback ? `<div class="msg-action-feedback">${uiState.messageFeedback}</div>` : ""}
       </article> 
     </section>
   `);
@@ -10052,6 +10092,38 @@ document.addEventListener("click", (event) => {
       render();
       return;
     }
+    if (action === "toggle-message-emoji-panel") {
+      uiState.messageEmojiPanelOpen = !uiState.messageEmojiPanelOpen;
+      render();
+      return;
+    }
+    if (action === "message-open-image-picker") {
+      const input = document.querySelector("[data-field='message-thread-image-file']");
+      if (input instanceof HTMLInputElement) input.click();
+      return;
+    }
+    if (action === "message-send-emoji") {
+      const emoji = String(actionTarget.getAttribute("data-emoji") || "").trim();
+      if (!emoji) return;
+      if (!uiState.isLoggedIn || !uiState.currentUserId) {
+        uiState.showLoginModal = true;
+        render();
+        return;
+      }
+      const activeId = getActiveThreadForSending();
+      if (!activeId) return;
+      uiState.messageEmojiPanelOpen = false;
+      render();
+      void sendMessageToThread(activeId, emoji, { messageType: "emoji", payload: { emoji } })
+        .then((message) => {
+          applySentThreadMessage(activeId, message, emoji);
+        })
+        .catch((err) => {
+          uiState.messageFeedback = `发送失败：${err instanceof Error ? err.message : "unknown"}`;
+          render();
+        });
+      return;
+    }
     if (action === "toggle-message-thread-tools") {
       uiState.messageThreadToolsOpen = !uiState.messageThreadToolsOpen;
       render();
@@ -10080,22 +10152,12 @@ document.addEventListener("click", (event) => {
       const draft = uiState.messageThreadDraft;
       uiState.messageThreadDraft = "";
       uiState.messageThreadToolsOpen = false;
+      uiState.messageEmojiPanelOpen = false;
       uiState.messageThreadMenuOpen = false;
       render();
       void sendMessageToThread(activeId, text)
         .then((message) => {
-          upsertThreadMessageFromServer(activeId, message || {}, uiState.currentUserId);
-          updateMessageInboxPreview(activeId, String(message?.content || text), {
-            time: formatThreadClock(message?.created_at),
-            createdAt: String(message?.created_at || "")
-          });
-          markMessageRead(activeId);
-          uiState.messageReadAckConversationId = "";
-          render();
-          requestAnimationFrame(() => {
-            const wrap = document.querySelector(".dm-modern-messages");
-            if (wrap) wrap.scrollTop = wrap.scrollHeight;
-          });
+          applySentThreadMessage(activeId, message, text);
         })
         .catch((err) => {
           uiState.messageThreadDraft = draft;
@@ -12305,6 +12367,41 @@ document.addEventListener("change", (event) => {
   }
   if (!(target instanceof HTMLInputElement)) return;
   const field = target.getAttribute("data-field");
+  if (field === "message-thread-image-file") {
+    const file = target.files?.[0];
+    target.value = "";
+    if (!file || !file.type.startsWith("image/")) return;
+    if (!uiState.isLoggedIn || !uiState.currentUserId) {
+      uiState.showLoginModal = true;
+      render();
+      return;
+    }
+    const activeId = getActiveThreadForSending();
+    if (!activeId) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const imageUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!imageUrl) return;
+      uiState.messageEmojiPanelOpen = false;
+      render();
+      void sendMessageToThread(activeId, "[图片]", {
+        messageType: "image",
+        payload: {
+          url: imageUrl,
+          name: file.name || "image"
+        }
+      })
+        .then((message) => {
+          applySentThreadMessage(activeId, message, "[图片]");
+        })
+        .catch((err) => {
+          uiState.messageFeedback = `发送失败：${err instanceof Error ? err.message : "unknown"}`;
+          render();
+        });
+    };
+    reader.readAsDataURL(file);
+    return;
+  }
   if (field !== "community-create-cover-file" && field !== "community-create-avatar-file" && field !== "me-hero-cover-file") return;
   const file = target.files?.[0];
   if (!file || !file.type.startsWith("image/")) return;

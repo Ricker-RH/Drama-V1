@@ -8619,22 +8619,30 @@ body.message-thread-route .layout.explore-mode .content {
   overscroll-behavior-y: contain;
 }
 
-.dm-plus-btn {
+.dm-plus-btn,
+.dm-attach-btn {
   width: 40px;
   height: 40px;
   border-radius: 999px;
   border: 1px solid #ddd6fe;
   background: #fff;
   color: #6d28d9;
-  font-size: 24px;
+  font-size: 20px;
   line-height: 1;
+  display: grid;
+  place-items: center;
   cursor: pointer;
 }
 
-.dm-modern-input-wrap-dark .dm-plus-btn {
+.dm-modern-input-wrap-dark .dm-plus-btn,
+.dm-modern-input-wrap-dark .dm-attach-btn {
   background: #fff;
   border-color: #ddd6fe;
   color: #6d28d9;
+}
+
+.dm-hidden-file-input {
+  display: none;
 }
 
 .dm-send-btn {
@@ -8673,6 +8681,53 @@ body.message-thread-route .layout.explore-mode .content {
 
 .dm-modern-input-wrap-dark input::placeholder {
   color: #9ca3af;
+}
+
+.dm-emoji-panel {
+  border: 1px solid #ececf2;
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.xh-main-message .dm-emoji-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 58px;
+  z-index: 2;
+  margin: 0;
+  box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.dm-emoji-panel button {
+  border: 1px solid #ececf2;
+  border-radius: 10px;
+  background: #fff;
+  min-height: 38px;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.dm-emoji-bubble {
+  font-size: 32px;
+  line-height: 1.2;
+  padding: 8px 12px;
+}
+
+.dm-media-bubble {
+  padding: 4px;
+  max-width: 240px;
+}
+
+.dm-media-bubble img {
+  display: block;
+  width: 100%;
+  max-width: 220px;
+  border-radius: 12px;
 }
 
 .dm-reaction-strip {
