@@ -51,6 +51,23 @@ npm run db:init -w apps/api
 - Web: `http://localhost:3000`
 - 健康检查: `http://localhost:3000/health`
 
+## 媒体存储（推荐生产使用 S3/R2）
+
+生产环境建议使用对象存储，避免 `/uploads` 本地磁盘在部署后丢失：
+
+1. 配置 `MEDIA_STORAGE_DRIVER=s3` 与 `MEDIA_S3_*` 凭证  
+2. 配置 `MEDIA_PUBLIC_BASE_URL` 为可公网访问的媒体域名（例如 R2 公共域名或 CDN 域名）  
+3. 将历史本地上传同步到对象存储（保留 `uploads/` 路径层级）：
+
+```bash
+DRY_RUN=true npm run media:sync:local-to-s3 -w apps/api
+DRY_RUN=false ONLY_MISSING=true npm run media:sync:local-to-s3 -w apps/api
+```
+
+说明：
+- API 在读取不到本地 `/uploads/*` 文件时，会回退重定向到 `MEDIA_PUBLIC_BASE_URL/uploads/*`，用于兼容历史相对路径。
+- `NODE_ENV=production` 下默认禁止 `MEDIA_STORAGE_DRIVER=local`（可用 `MEDIA_ALLOW_LOCAL_IN_PROD=true` 显式放开，不建议）。
+
 账号密码登录（初版）：
 - 前端入口：页面内登录弹窗 -> `账号密码`
 - API：`POST /api/v1/auth/login`

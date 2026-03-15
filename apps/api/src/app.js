@@ -13,7 +13,7 @@ import { handleCreatorCards } from "./routes/creator-cards.js";
 import { handlePaint } from "./routes/paint.js";
 import { handleMedia } from "./routes/media.js";
 import { handleObservability } from "./routes/observability.js";
-import { getLocalMediaRootDir } from "./services/media-storage.js";
+import { getLocalMediaRootDir, getMediaPublicBaseUrl } from "./services/media-storage.js";
 import {
   createRequestMetricsContext,
   recordHttpRequest,
@@ -24,6 +24,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const webRoot = path.resolve(__dirname, "../../web");
 const localMediaRoot = getLocalMediaRootDir();
+const mediaPublicBaseUrl = getMediaPublicBaseUrl();
 
 function getContentTypeByPathname(pathname = "") {
   const lower = String(pathname || "").toLowerCase();
@@ -96,6 +97,15 @@ async function serveUploadAsset(res, pathname) {
     res.end(data);
     return true;
   } catch {
+    if (mediaPublicBaseUrl && /^https?:\/\//i.test(mediaPublicBaseUrl)) {
+      const location = `${mediaPublicBaseUrl}${pathname}`;
+      res.writeHead(302, {
+        Location: location,
+        "Cache-Control": "public, max-age=300"
+      });
+      res.end();
+      return true;
+    }
     return false;
   }
 }

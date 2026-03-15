@@ -62,7 +62,13 @@ function inferExtFromMime(contentType = "") {
 }
 
 function getStorageDriver() {
-  return String(process.env.MEDIA_STORAGE_DRIVER || "").trim().toLowerCase() === "s3" ? "s3" : "local";
+  const driver = String(process.env.MEDIA_STORAGE_DRIVER || "").trim().toLowerCase() === "s3" ? "s3" : "local";
+  const isProd = String(process.env.NODE_ENV || "").trim().toLowerCase() === "production";
+  const allowLocalInProd = boolFromEnv(process.env.MEDIA_ALLOW_LOCAL_IN_PROD, false);
+  if (isProd && driver === "local" && !allowLocalInProd) {
+    throw new Error("MEDIA_LOCAL_STORAGE_BLOCKED_IN_PRODUCTION");
+  }
+  return driver;
 }
 
 function getLocalRoot() {
@@ -76,6 +82,10 @@ export function getLocalMediaRootDir() {
 
 function getPublicBaseUrl() {
   return trimSlash(process.env.MEDIA_PUBLIC_BASE_URL || "");
+}
+
+export function getMediaPublicBaseUrl() {
+  return getPublicBaseUrl();
 }
 
 function buildObjectKey(folder = "misc", contentType = "application/octet-stream") {

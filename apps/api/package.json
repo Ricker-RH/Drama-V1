@@ -15,7 +15,8 @@
     "db:seed:fast": "node src/scripts/seed-tail-fast.js",
     "db:backfill:gameplay-signature": "node src/scripts/backfill-gameplay-signatures.js",
     "test:story-output": "node src/scripts/test-story-output.js",
-    "media:migrate:data-url": "node src/scripts/migrate-data-urls-to-media.js"
+    "media:migrate:data-url": "node src/scripts/migrate-data-urls-to-media.js",
+    "media:sync:local-to-s3": "node src/scripts/sync-local-uploads-to-s3.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1008.0",
