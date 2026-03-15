@@ -56,6 +56,11 @@ let AUTH_USER_ALIAS_INDEX_AT = 0;
 const AUTH_USER_ALIAS_INDEX_TTL_MS = 5 * 60 * 1000;
 let DRAMA_HERO_TOTAL = 1;
 const API_BASE = "/api/v1";
+const PWA_SW_URL = "/sw.js";
+const PWA_DISABLE_KEY = "drama_pwa_disabled_v1";
+const PWA_DEBUG_KEY = "drama_pwa_debug_v1";
+const PWA_INSTALL_HINT_DISMISS_UNTIL_KEY = "drama_pwa_install_hint_dismiss_until_v1";
+const PWA_INSTALL_HINT_COOLDOWN_MS = 5 * 24 * 60 * 60 * 1000;
 const CLIENT_OBSERVABILITY_ENDPOINT = `${API_BASE}/observability/client`;
 const CLIENT_OBSERVABILITY_SESSION_KEY = "drama_client_obs_session_v1";
 const CLIENT_OBSERVABILITY_FLUSH_INTERVAL_MS = 12_000;
@@ -3544,7 +3549,7 @@ function pageLogin() {
         <section class="login-page-card">
           <div class="login-page-brand">
             <img src="/assets/logo-v5.png" alt="爪马 Logo" loading="eager" fetchpriority="high" />
-            <h1>爪马 Drama</h1>
+            <h1>Drama抓马</h1>
             <p>请选择登录方式</p>
           </div>
           <div class="login-page-methods">
@@ -4481,7 +4486,7 @@ function renderExploreLoginModal(options = {}) {
         <section class="login-page-card">
           <div class="login-page-brand">
             <img src="/assets/logo-v5.png" alt="爪马 Logo" loading="eager" fetchpriority="high" />
-            <h1>爪马 Drama</h1>
+            <h1>Drama抓马</h1>
             <p>沉浸式剧情社区，探索、创作、开刷一次完成。</p>
           </div>
 
@@ -4542,7 +4547,7 @@ function renderExploreLoginModal(options = {}) {
         ${standalone ? "" : `<button class="login-modal-close" data-action="close-login-modal">×</button>`}
         <div class="login-modal-left">
           <div class="login-bubble">登录后推荐更懂你的内容</div>
-          <div class="login-mini-brand"><img src="/assets/logo-v5.png" alt="爪马 Logo" loading="eager" fetchpriority="high" /><span>爪马 Drama</span></div>
+          <div class="login-mini-brand"><img src="/assets/logo-v5.png" alt="爪马 Logo" loading="eager" fetchpriority="high" /><span>Drama抓马</span></div>
           <div class="login-qr-box">扫码区</div>
           <p>可用 Drama 或 微信扫码</p>
           <small>▶ 如何扫码登录</small>
@@ -23796,6 +23801,200 @@ function syncMobileViewportForThread() {
   }
 }
 
+let deferredPwaInstallPromptEvent = null;
+let pwaInstallHintRoot = null;
+let pwaInstallHintMounted = false;
+
+function isIosDevice() {
+  const ua = String(navigator.userAgent || "").toLowerCase();
+  return /iphone|ipad|ipod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function isAndroidDevice() {
+  return /android/i.test(String(navigator.userAgent || ""));
+}
+
+function isSafariBrowser() {
+  const ua = String(navigator.userAgent || "");
+  return /Safari/i.test(ua) && !/Chrome|CriOS|Edg|OPR|FxiOS/i.test(ua);
+}
+
+function isRunningStandalone() {
+  return window.matchMedia("(display-mode: standalone)").matches || Boolean(navigator.standalone);
+}
+
+function getPwaInstallHintDismissUntil() {
+  try {
+    return Number(localStorage.getItem(PWA_INSTALL_HINT_DISMISS_UNTIL_KEY) || 0);
+  } catch {
+    return 0;
+  }
+}
+
+function setPwaInstallHintDismissCooldown() {
+  try {
+    localStorage.setItem(PWA_INSTALL_HINT_DISMISS_UNTIL_KEY, String(Date.now() + PWA_INSTALL_HINT_COOLDOWN_MS));
+  } catch {}
+}
+
+function clearPwaInstallHintNode() {
+  if (pwaInstallHintRoot && pwaInstallHintRoot.parentNode) {
+    pwaInstallHintRoot.parentNode.removeChild(pwaInstallHintRoot);
+  }
+  pwaInstallHintRoot = null;
+  pwaInstallHintMounted = false;
+}
+
+function shouldShowPwaInstallHint() {
+  if (isRunningStandalone()) return false;
+  if (!window.isSecureContext) return false;
+  if (isLikelyLocalHost(window.location.hostname)) return false;
+  if (isPwaDisabledByUser()) return false;
+  if (Date.now() < getPwaInstallHintDismissUntil()) return false;
+  return true;
+}
+
+function renderPwaInstallHint({ platform = "generic", canPrompt = false } = {}) {
+  if (!shouldShowPwaInstallHint()) return;
+  if (pwaInstallHintMounted) return;
+  const title = platform === "ios" ? "可添加到主屏幕" : "安装爪马到桌面";
+  const guideText = platform === "ios"
+    ? "在 Safari 点击“分享”按钮，再点“添加到主屏幕”。"
+    : "安装后会像原生 App 一样独立打开，入口在主屏幕。";
+  const actionText = canPrompt ? "立即安装" : "知道了";
+
+  const wrapper = document.createElement("aside");
+  wrapper.className = "pwa-install-hint";
+  wrapper.innerHTML = `
+    <div class="pwa-install-hint__title">${escapeHtml(title)}</div>
+    <p class="pwa-install-hint__sub">${escapeHtml(guideText)}</p>
+    <div class="pwa-install-hint__actions">
+      <button type="button" class="pwa-install-hint__btn pwa-install-hint__btn--ghost" data-action="dismiss">稍后</button>
+      <button type="button" class="pwa-install-hint__btn pwa-install-hint__btn--primary" data-action="install">${escapeHtml(actionText)}</button>
+    </div>
+  `;
+
+  wrapper.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const action = target.getAttribute("data-action");
+    if (action === "dismiss") {
+      setPwaInstallHintDismissCooldown();
+      clearPwaInstallHintNode();
+      return;
+    }
+    if (action !== "install") return;
+    if (canPrompt && deferredPwaInstallPromptEvent) {
+      const promptEvent = deferredPwaInstallPromptEvent;
+      deferredPwaInstallPromptEvent = null;
+      try {
+        await promptEvent.prompt();
+        await promptEvent.userChoice;
+      } catch {}
+      clearPwaInstallHintNode();
+      return;
+    }
+    setPwaInstallHintDismissCooldown();
+    clearPwaInstallHintNode();
+  });
+
+  document.body.appendChild(wrapper);
+  pwaInstallHintRoot = wrapper;
+  pwaInstallHintMounted = true;
+}
+
+function initPwaInstallExperience() {
+  if (!("serviceWorker" in navigator)) return;
+  if (isRunningStandalone()) return;
+
+  window.addEventListener("appinstalled", () => {
+    deferredPwaInstallPromptEvent = null;
+    setPwaInstallHintDismissCooldown();
+    clearPwaInstallHintNode();
+  });
+
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredPwaInstallPromptEvent = event;
+    renderPwaInstallHint({ platform: "android", canPrompt: true });
+  });
+
+  if (isIosDevice() && isSafariBrowser()) {
+    setTimeout(() => {
+      renderPwaInstallHint({ platform: "ios", canPrompt: false });
+    }, 1400);
+    return;
+  }
+
+  if (isAndroidDevice()) {
+    setTimeout(() => {
+      if (!deferredPwaInstallPromptEvent) {
+        renderPwaInstallHint({ platform: "android", canPrompt: false });
+      }
+    }, 2200);
+  }
+}
+
+function isLikelyLocalHost(hostname = "") {
+  const host = String(hostname || "").toLowerCase();
+  return (
+    host === "localhost"
+    || host === "127.0.0.1"
+    || host === "::1"
+    || host.endsWith(".local")
+  );
+}
+
+function isPwaDisabledByUser() {
+  try {
+    return localStorage.getItem(PWA_DISABLE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function isPwaDebugEnabled() {
+  try {
+    return localStorage.getItem(PWA_DEBUG_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function shouldRegisterPwa() {
+  if (!("serviceWorker" in navigator)) return false;
+  if (!window.isSecureContext) return false;
+  if (isLikelyLocalHost(window.location.hostname)) return false;
+  if (isPwaDisabledByUser()) return false;
+  return true;
+}
+
+async function unregisterAllServiceWorkers() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((reg) => reg.unregister()));
+  } catch {}
+}
+
+async function initPwa() {
+  if (!("serviceWorker" in navigator)) return;
+  if (!shouldRegisterPwa()) {
+    await unregisterAllServiceWorkers();
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register(PWA_SW_URL, { scope: "/" });
+    if (isPwaDebugEnabled()) {
+      console.info("[PWA] service worker registered", reg?.scope || "");
+    }
+  } catch (error) {
+    if (isPwaDebugEnabled()) {
+      console.warn("[PWA] service worker registration failed", error);
+    }
+  }
+}
+
 window.addEventListener("hashchange", (event) => {
   const prevRoute = routePathFromUrl(event?.oldURL || "");
   captureRouteScrollTop(prevRoute);
@@ -23911,6 +24110,8 @@ document.addEventListener("focusout", () => {
 });
 
 async function startApp() {
+  void initPwa();
+  initPwaInstallExperience();
   hydratePlayBackgroundPreference();
   hydrateSelectedWorldId();
   const cachedUserId = String(hydrateAuthUserId() || "").trim();

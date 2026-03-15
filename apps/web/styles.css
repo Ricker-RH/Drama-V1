@@ -17481,3 +17481,55 @@ button {
     radial-gradient(120% 100% at 100% 0%, rgba(102, 149, 255, 0.12), transparent 52%),
     linear-gradient(180deg, #f5f7ff, #f3ecff) !important;
 }
+
+.pwa-install-hint {
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: calc(env(safe-area-inset-bottom) + 14px);
+  z-index: 1200;
+  border: 1px solid rgba(108, 40, 217, 0.14);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 14px 32px rgba(17, 24, 39, 0.16);
+}
+
+.pwa-install-hint__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.pwa-install-hint__sub {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #4b5563;
+  line-height: 1.5;
+}
+
+.pwa-install-hint__actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pwa-install-hint__btn {
+  border: none;
+  border-radius: 9px;
+  padding: 8px 11px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pwa-install-hint__btn--ghost {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.pwa-install-hint__btn--primary {
+  background: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 100%);
+  color: #fff;
+}

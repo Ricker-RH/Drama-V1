@@ -27,8 +27,10 @@ const localMediaRoot = getLocalMediaRootDir();
 
 function getContentTypeByPathname(pathname = "") {
   const lower = String(pathname || "").toLowerCase();
+  if (lower.endsWith(".html")) return "text/html; charset=utf-8";
   if (lower.endsWith(".css")) return "text/css; charset=utf-8";
   if (lower.endsWith(".js")) return "application/javascript; charset=utf-8";
+  if (lower.endsWith(".webmanifest")) return "application/manifest+json; charset=utf-8";
   if (lower.endsWith(".png")) return "image/png";
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
   if (lower.endsWith(".webp")) return "image/webp";
@@ -61,7 +63,12 @@ async function serveAsset(res, pathname) {
   try {
     const data = await fs.readFile(filePath);
     const headers = { "Content-Type": contentType };
-    if (pathname.endsWith(".css") || pathname.endsWith(".js")) {
+    if (
+      pathname.endsWith(".css")
+      || pathname.endsWith(".js")
+      || pathname.endsWith(".webmanifest")
+      || pathname.endsWith("sw.js")
+    ) {
       headers["Cache-Control"] = "no-store";
     }
     res.writeHead(200, headers);
@@ -228,7 +235,14 @@ export async function handleHttp(req, res) {
         if (ok) return;
       }
 
-      if (pathname === "/styles.css" || pathname === "/app.js" || pathname.startsWith("/assets/")) {
+      if (
+        pathname === "/styles.css"
+        || pathname === "/app.js"
+        || pathname === "/offline.html"
+        || pathname === "/manifest.webmanifest"
+        || pathname === "/sw.js"
+        || pathname.startsWith("/assets/")
+      ) {
         const ok = await serveAsset(res, pathname.slice(1));
         if (ok) return;
       }
