@@ -35,7 +35,8 @@ const server = http.createServer(handleHttp);
 let bootstrapRecoveryTimer = null;
 
 async function warmupRuntime() {
-  if (process.env.AUTO_INIT_DB === "true") {
+  const shouldInitDb = String(process.env.AUTO_INIT_DB || "true").toLowerCase() !== "false";
+  if (shouldInitDb) {
     await initDatabase();
   } else {
     await ensureRuntimeSchemaCompat();
