@@ -1,4 +1,4 @@
-const SW_VERSION = "drama-sw-v3";
+const SW_VERSION = "drama-sw-v4";
 const STATIC_CACHE = `${SW_VERSION}-static`;
 const RUNTIME_CACHE = `${SW_VERSION}-runtime`;
 const OFFLINE_FALLBACK_URL = "/offline.html";

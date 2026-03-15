@@ -51,6 +51,8 @@ export async function listUserInbox({ userId, limit = 80 }) {
       end as peer_avatar_url,
       c.last_message_at,
       coalesce(cm.unread_count, 0) as unread_count,
+      coalesce(cm.pinned, false) as pinned,
+      coalesce(cm.muted, false) as muted,
       coalesce(m.content, '') as preview,
       c.settings_json,
       coalesce(c.settings_json->>'worldCardId', '') as story_world_card_id,
@@ -71,6 +73,35 @@ export async function listUserInbox({ userId, limit = 80 }) {
     [userId, safeLimit]
   );
   return res.rows;
+}
+
+export async function setConversationThreadPrefs({
+  conversationId,
+  userId,
+  pinned = null,
+  muted = null
+}) {
+  const cid = String(conversationId || "").trim();
+  const uid = String(userId || "").trim();
+  if (!cid || !uid) throw new Error("INVALID_INPUT");
+  await assertConversationMember(cid, uid);
+
+  const hasPinned = typeof pinned === "boolean";
+  const hasMuted = typeof muted === "boolean";
+  if (!hasPinned && !hasMuted) throw new Error("INVALID_INPUT");
+
+  const result = await query(
+    `update conversation_members
+     set pinned = case when $3::boolean is null then pinned else $3::boolean end,
+         muted = case when $4::boolean is null then muted else $4::boolean end,
+         updated_at = now()
+     where conversation_id = $1
+       and user_id = $2
+       and deleted_at is null
+     returning conversation_id, user_id, pinned, muted, updated_at`,
+    [cid, uid, hasPinned ? pinned : null, hasMuted ? muted : null]
+  );
+  return result.rows[0] || null;
 }
 
 export async function sendConversationMessage({

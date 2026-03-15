@@ -25,6 +25,7 @@ import { invalidateBootstrapCoreCache } from "./bootstrap.js";
 const memorySessions = new Map();
 const memoryTurns = new Map();
 const VALID_MODES = new Set(["long_narrative", "short_narrative", "virtual_character"]);
+const STORY_SFW_GUARD_ENABLED = String(process.env.STORY_SFW_GUARD || "true").trim().toLowerCase() !== "false";
 
 function isUuid(value = "") {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -61,8 +62,11 @@ function hasUsableDatabaseUrl() {
 }
 
 function useMemoryStore() {
-  if (process.env.FORCE_MEMORY_STORE === "true") return true;
-  return !hasUsableDatabaseUrl();
+  const dbReady = hasUsableDatabaseUrl();
+  if (!dbReady) return true;
+  // Prefer DB whenever available to keep local/dev behavior consistent with deployment.
+  // Use FORCE_MEMORY_STORE=true only when DB is unavailable.
+  return false;
 }
 
 function createMemorySession({ userId, category, subCategory, mode, currentModel, worldCardId, gameplayVersion = 1, appearanceVersion = 1 }) {
@@ -206,6 +210,29 @@ function toUserFacingTurnError(llmResult) {
     return "模型返回格式不完整（已自动重试后仍失败），请重试或切换模型";
   }
   return reason;
+}
+
+function containsUnsafeEroticContent(text = "") {
+  const src = String(text || "").toLowerCase();
+  if (!src) return false;
+  const hardKeywords = [
+    "强奸", "轮奸", "迷奸", "性奴", "做爱", "口交", "性交", "裸照", "援交",
+    "乱伦", "约炮", "sm", "调教", "颜射", "射精", "下体", "阴茎", "阴道"
+  ];
+  if (hardKeywords.some((kw) => src.includes(kw))) return true;
+  const minors = ["未成年", "小学生", "初中生", "高中生", "同桌", "老师", "校园"];
+  const sexual = ["性", "色情", "露骨", "上床", "摸", "强吻", "举动", "挑逗", "欲望"];
+  const minorHit = minors.some((kw) => src.includes(kw));
+  const sexualHit = sexual.some((kw) => src.includes(kw));
+  return minorHit && sexualHit;
+}
+
+function sanitizeNarrativeForSafety(text = "") {
+  const src = String(text || "").trim();
+  if (!src) return "";
+  if (!STORY_SFW_GUARD_ENABLED) return src;
+  if (!containsUnsafeEroticContent(src)) return src;
+  return "系统提示：当前文本触发安全策略，已自动拦截。请使用非敏感、健康的剧情描述继续推进。";
 }
 
 function extractQualityFailureKeys(reason) {
@@ -386,7 +413,7 @@ async function persistTurnAndBuildResponse({
   turnIndex,
   rewriteMeta = null
 }) {
-  const actionResult = llmResult.narrativeBlock;
+  const actionResult = sanitizeNarrativeForSafety(llmResult.narrativeBlock);
   const stateDelta = llmResult.jsonBlock?.state_delta || {};
   const promptQuestion = llmResult?.jsonBlock?.prompt_question || "";
   const promptOptions = Array.isArray(llmResult?.jsonBlock?.prompt_options)

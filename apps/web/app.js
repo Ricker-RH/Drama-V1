@@ -1367,6 +1367,13 @@ function setMessageThreadPinned(conversationId, pinned) {
   if (pinned) uiState.messagePinnedByConversationId[id] = true;
   else delete uiState.messagePinnedByConversationId[id];
   persistMessageThreadPrefs();
+  if (uiState.isLoggedIn && uiState.currentUserId && isUuid(id)) {
+    void apiJson("/messages/thread/prefs", {
+      conversationId: id,
+      userId: uiState.currentUserId,
+      pinned: Boolean(pinned)
+    }).catch(() => {});
+  }
   return Boolean(pinned);
 }
 
@@ -1377,6 +1384,13 @@ function setMessageThreadMuted(conversationId, muted) {
   if (muted) uiState.messageMutedByConversationId[id] = true;
   else delete uiState.messageMutedByConversationId[id];
   persistMessageThreadPrefs();
+  if (uiState.isLoggedIn && uiState.currentUserId && isUuid(id)) {
+    void apiJson("/messages/thread/prefs", {
+      conversationId: id,
+      userId: uiState.currentUserId,
+      muted: Boolean(muted)
+    }).catch(() => {});
+  }
   return Boolean(muted);
 }
 
@@ -8549,6 +8563,8 @@ function messageInboxChanged(prev = [], next = []) {
     if ((a.bizType || "") !== (b.bizType || "")) return true;
     if ((a.worldId || "") !== (b.worldId || "")) return true;
     if ((a.sessionId || "") !== (b.sessionId || "")) return true;
+    if (Boolean(a.pinned) !== Boolean(b.pinned)) return true;
+    if (Boolean(a.muted) !== Boolean(b.muted)) return true;
   }
   return false;
 }
@@ -8561,6 +8577,20 @@ async function syncMessageInbox() {
     .map((item) => applyMessageConversationForceUnread(item))
     .map((item) => normalizeStoryInboxItem(item))
     .filter((item) => !shouldHideInboxConversationByDeletedState(item));
+  ensureMessageThreadPrefsLoaded();
+  next.forEach((item) => {
+    const cid = String(item?.id || "").trim();
+    if (!cid) return;
+    if (typeof item?.pinned === "boolean") {
+      if (item.pinned) uiState.messagePinnedByConversationId[cid] = true;
+      else delete uiState.messagePinnedByConversationId[cid];
+    }
+    if (typeof item?.muted === "boolean") {
+      if (item.muted) uiState.messageMutedByConversationId[cid] = true;
+      else delete uiState.messageMutedByConversationId[cid];
+    }
+  });
+  persistMessageThreadPrefs();
   next.forEach((item) => {
     persistMessageMeta(item?.id, {
       name: item?.name,

@@ -6,6 +6,7 @@ import {
   listUserInbox,
   listConversationMessages,
   markConversationRead,
+  setConversationThreadPrefs,
   sendConversationMessage
 } from "../repos/message-repo.js";
 import { createPostComment, setPostCommentLike } from "../repos/post-repo.js";
@@ -129,6 +130,8 @@ export async function handleMessages(req, res, pathname) {
           time: toClock(row.last_message_at),
           lastMessageAt: row.last_message_at || null,
           badge: Number(row.unread_count || 0),
+          pinned: Boolean(row.pinned),
+          muted: Boolean(row.muted),
           worldId: String(row.story_world_card_id || "").trim(),
           sessionId: String(row.story_latest_session_id || "").trim()
         };
@@ -159,6 +162,46 @@ export async function handleMessages(req, res, pathname) {
       return json(res, 200, { messages: rows, peer });
     } catch (error) {
       const msg = error instanceof Error ? error.message : "THREAD_FETCH_FAILED";
+      const status = msg === "FORBIDDEN_CONVERSATION" ? 403 : 400;
+      return json(res, status, { code: msg, message: msg });
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/messages/thread/prefs") {
+    const body = await parseBody(req);
+    const conversationId = String(body?.conversationId || "").trim();
+    const userId = String(body?.userId || "").trim();
+    const hasPinned = Object.prototype.hasOwnProperty.call(body || {}, "pinned");
+    const hasMuted = Object.prototype.hasOwnProperty.call(body || {}, "muted");
+    const pinned = hasPinned ? Boolean(body?.pinned) : null;
+    const muted = hasMuted ? Boolean(body?.muted) : null;
+    if (!conversationId || !userId || (!hasPinned && !hasMuted)) {
+      return json(res, 400, {
+        code: "INVALID_INPUT",
+        message: "conversationId, userId and at least one of pinned/muted are required"
+      });
+    }
+    try {
+      const prefs = await setConversationThreadPrefs({
+        conversationId,
+        userId,
+        pinned,
+        muted
+      });
+      if (!prefs) {
+        return json(res, 404, { code: "CONVERSATION_NOT_FOUND", message: "conversation not found" });
+      }
+      return json(res, 200, {
+        prefs: {
+          conversationId: String(prefs.conversation_id || conversationId),
+          userId: String(prefs.user_id || userId),
+          pinned: Boolean(prefs.pinned),
+          muted: Boolean(prefs.muted),
+          updatedAt: prefs.updated_at || null
+        }
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "THREAD_PREFS_UPDATE_FAILED";
       const status = msg === "FORBIDDEN_CONVERSATION" ? 403 : 400;
       return json(res, status, { code: msg, message: msg });
     }
