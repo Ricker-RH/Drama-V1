@@ -10,7 +10,7 @@ const CREATOR_CARD_SCHEMA = {
     },
     short_narrative: {
       label: "故事卡",
-      required: ["openingAnchor", "endingAnchors", "fixedNpcs", "scopeLimits", "primaryGoal", "coreConflict"],
+      required: ["openingLine", "openingAnchor", "endingAnchors", "fixedNpcs", "scopeLimits", "primaryGoal", "coreConflict"],
       optional: ["branchSeeds", "pacingHint", "cluePool"]
     },
     virtual_character: {
@@ -85,6 +85,7 @@ function heuristicParseByMode(mode, text) {
 
   if (mode === "short_narrative") {
     return {
+      openingLine: first || "你刚踏入现场，局势已经逼近临界点。",
       openingAnchor: first || "突发事件打断日常秩序，你被迫在有限时间内选择站位。",
       endingAnchors: "A 正面翻盘达成目标；B 代价换胜；C 保底过线但错失关键机会",
       fixedNpcs: seedPeople || "关键角色A（支持） / 关键角色B（对立） / 关键角色C（摇摆）",
@@ -197,4 +198,3 @@ export async function parseCreatorCardIdea({ mode, text }) {
     confidence: modelParsed ? 0.86 : 0.62
   };
 }
-

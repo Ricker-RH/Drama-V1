@@ -36,7 +36,7 @@ alter table if exists creator_card_npcs
   add column if not exists profile_json jsonb not null default '{}'::jsonb;
 
 create index if not exists idx_creator_card_npcs_fixed_priority
-  on creator_card_npcs(creator_card_id, is_fixed, priority desc);
+  on creator_card_npcs(creator_card_id, is_fixed, sort_order desc);
 
 -- ------------------------------------------------------------
 -- 3) Story branch graph (mainly for short_narrative)

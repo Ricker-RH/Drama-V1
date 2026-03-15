@@ -9,7 +9,7 @@ import {
   setWorldCardCommentLike,
   deleteWorldCardComment
 } from "../repos/worldcard-repo.js";
-import { invalidateBootstrapCoreCache } from "./bootstrap.js";
+import { publishMessageEventToAllUsers } from "../services/message-realtime.js";
 
 function isDbUnavailableError(error) {
   const msg = String(error instanceof Error ? error.message : error || "");
@@ -22,6 +22,24 @@ function toClock(dateLike) {
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   return `${hh}:${mm}`;
+}
+
+function mapWorldCommentNode(row, parentId = null) {
+  return {
+    id: row.id,
+    worldCardId: row.world_card_id,
+    userId: row.user_id,
+    parentCommentId: row.parent_comment_id || parentId || null,
+    user: row.user_name || "玩家",
+    text: row.content || "",
+    likes: Number(row.likes_count || 0),
+    likedByMe: Boolean(row.liked_by_me),
+    createdAt: row.created_at,
+    time: toClock(row.created_at),
+    replies: Array.isArray(row.replies)
+      ? row.replies.map((reply) => mapWorldCommentNode(reply, row.id))
+      : []
+  };
 }
 
 export async function handleWorldCard(req, res, pathname) {
@@ -49,32 +67,7 @@ export async function handleWorldCard(req, res, pathname) {
     const rows = Array.isArray(result?.comments) ? result.comments : [];
     return json(res, 200, {
       commentsCount: Number(result?.totalCount || rows.length),
-      comments: rows.map((row) => ({
-        id: row.id,
-        worldCardId: row.world_card_id,
-        userId: row.user_id,
-        parentCommentId: row.parent_comment_id || null,
-        user: row.user_name || "玩家",
-        text: row.content || "",
-        likes: Number(row.likes_count || 0),
-        likedByMe: Boolean(row.liked_by_me),
-        createdAt: row.created_at,
-        time: toClock(row.created_at),
-        replies: Array.isArray(row.replies)
-          ? row.replies.map((reply) => ({
-              id: reply.id,
-              worldCardId: reply.world_card_id,
-              userId: reply.user_id,
-              parentCommentId: reply.parent_comment_id || row.id,
-              user: reply.user_name || "玩家",
-              text: reply.content || "",
-              likes: Number(reply.likes_count || 0),
-              likedByMe: Boolean(reply.liked_by_me),
-              createdAt: reply.created_at,
-              time: toClock(reply.created_at)
-            }))
-          : []
-      }))
+      comments: rows.map((row) => mapWorldCommentNode(row))
     });
   }
 
@@ -89,7 +82,8 @@ export async function handleWorldCard(req, res, pathname) {
         worldCardId: body.worldCardId,
         userId: body.userId,
         content: body.content,
-        parentCommentId: body.parentCommentId || null
+        parentCommentId: body.parentCommentId || null,
+        clientToken: body.clientCommentId || null
       });
     } catch (error) {
       if (isDbUnavailableError(error)) {
@@ -103,7 +97,31 @@ export async function handleWorldCard(req, res, pathname) {
     if (!result?.comment) {
       return json(res, 404, { code: "WORLD_CARD_NOT_FOUND", message: "world card not found" });
     }
-    invalidateBootstrapCoreCache();
+    const version = String(result?.comment?.version || new Date().toISOString());
+    const patch = {
+      worldCardId: String(result.comment.world_card_id || body.worldCardId || ""),
+      parentCommentId: result.comment.parent_comment_id || null,
+      commentsCount: Number(result.commentsCount || 0),
+      version
+    };
+    publishMessageEventToAllUsers("social:patch", {
+      kind: "world.comment.created",
+      actorId: String(body.userId || ""),
+      worldCardId: patch.worldCardId,
+      comment: {
+        id: String(result.comment.id || ""),
+        worldCardId: String(result.comment.world_card_id || patch.worldCardId || ""),
+        userId: String(result.comment.user_id || body.userId || ""),
+        parentCommentId: result.comment.parent_comment_id || null,
+        user: String(result.comment.user_name || "玩家"),
+        text: String(result.comment.content || ""),
+        likes: Number(result.comment.likes_count || 0),
+        likedByMe: false,
+        createdAt: result.comment.created_at || null
+      },
+      patch,
+      serverTime: new Date().toISOString()
+    });
     return json(res, 201, {
       comment: {
         id: result.comment.id,
@@ -117,7 +135,9 @@ export async function handleWorldCard(req, res, pathname) {
         createdAt: result.comment.created_at,
         time: toClock(result.comment.created_at)
       },
-      commentsCount: Number(result.commentsCount || 0)
+      commentsCount: Number(result.commentsCount || 0),
+      patch,
+      version
     });
   }
 
@@ -146,6 +166,20 @@ export async function handleWorldCard(req, res, pathname) {
     if (!result) {
       return json(res, 404, { code: "COMMENT_NOT_FOUND", message: "comment not found" });
     }
+    const version = String(result?.version || new Date().toISOString());
+    const patch = {
+      commentId: String(result.commentId || body.commentId || ""),
+      worldCardId: String(result.worldCardId || ""),
+      likedByMe: Boolean(result.likedByMe),
+      likesCount: Number(result.likesCount || 0),
+      version
+    };
+    publishMessageEventToAllUsers("social:patch", {
+      kind: "world.comment.like",
+      actorId: String(body.userId || ""),
+      patch,
+      serverTime: new Date().toISOString()
+    });
     return json(res, 200, {
       comment: {
         id: result.commentId,
@@ -153,7 +187,9 @@ export async function handleWorldCard(req, res, pathname) {
         likes: Number(result.likesCount || 0),
         likedByMe: Boolean(result.likedByMe)
       },
-      active
+      active,
+      patch,
+      version
     });
   }
 
@@ -183,6 +219,16 @@ export async function handleWorldCard(req, res, pathname) {
     if (result.status === "forbidden") {
       return json(res, 403, { code: "COMMENT_FORBIDDEN", message: "cannot delete others comment" });
     }
+    publishMessageEventToAllUsers("social:patch", {
+      kind: "world.comment.deleted",
+      actorId: String(body.userId || ""),
+      worldCardId: String(result.worldCardId || ""),
+      commentId: String(body.commentId || ""),
+      commentsCount: Number(result.commentsCount || 0),
+      deletedCount: Number(result.deletedCount || 0),
+      topLevelDeleted: Number(result.topLevelDeleted || 0),
+      serverTime: new Date().toISOString()
+    });
     return json(res, 200, {
       commentId: body.commentId,
       worldCardId: result.worldCardId,
@@ -211,8 +257,27 @@ export async function handleWorldCard(req, res, pathname) {
     if (!stats) {
       return json(res, 404, { code: "WORLD_CARD_NOT_FOUND", message: "world card not found" });
     }
-    invalidateBootstrapCoreCache();
-    return json(res, 200, { stats, active });
+    const version = String(stats?.version || new Date().toISOString());
+    const patch = {
+      worldCardId: String(stats?.worldCardId || body.worldCardId || ""),
+      interactionType: String(stats?.interactionType || body.interactionType || "like"),
+      active: typeof stats?.active === "boolean" ? stats.active : active,
+      likesCount: Number(stats?.likesCount || 0),
+      favoritesCount: Number(stats?.favoritesCount || 0),
+      likedByMe: typeof stats?.likedByMe === "boolean" ? stats.likedByMe : null,
+      favoritedByMe: typeof stats?.favoritedByMe === "boolean" ? stats.favoritedByMe : null,
+      version
+    };
+    publishMessageEventToAllUsers("social:patch", {
+      kind: "world.reaction",
+      actorId: String(body.userId || ""),
+      patch,
+      serverTime: new Date().toISOString()
+    });
+    return json(res, 200, {
+      patch,
+      version
+    });
   }
 
   if (req.method === "POST" && pathname === "/api/v1/worldcards") {

@@ -26,8 +26,12 @@ export async function getUserAuthByIdentifier(identifier) {
   const result = await query(
     `select id, email, nickname, password_hash, created_at
      from users
-     where lower(coalesce(email, '')) = $1
-        or lower(coalesce(nickname, '')) = $1
+     where status = 'active'
+       and deleted_at is null
+       and (
+         lower(email) = $1
+         or lower(nickname) = $1
+       )
      limit 1`,
     [key]
   );
@@ -162,4 +166,87 @@ export async function getFollowStats(userId) {
     fansCount: Number(result.rows[0]?.fans_count || 0),
     followsCount: Number(result.rows[0]?.follows_count || 0)
   };
+}
+
+export async function updateUserProfile({
+  userId,
+  name,
+  handle,
+  bio,
+  avatarUrl,
+  coverUrl,
+  backstageCoverUrl,
+  gender,
+  birthday,
+  backstageMask = null
+}) {
+  await query(
+    `update users
+     set nickname = $2,
+         bio = $3,
+         avatar_url = $4,
+         updated_at = now()
+     where id = $1::uuid`,
+    [
+      userId,
+      name,
+      bio || "",
+      avatarUrl || null
+    ]
+  );
+
+  await query(
+    `insert into user_profiles(user_id, cover_url, extra)
+     values (
+      $1::uuid,
+      $2,
+      jsonb_strip_nulls(
+        jsonb_build_object(
+          'handle', $3::text,
+          'gender', $4::text,
+          'birthday', $5::text,
+          'backstageMask', $6::boolean,
+          'backstageCoverUrl', $7::text
+        )
+      )
+     )
+     on conflict (user_id) do update set
+      cover_url = excluded.cover_url,
+      extra = coalesce(user_profiles.extra, '{}'::jsonb) || excluded.extra,
+      updated_at = now()`,
+    [
+      userId,
+      coverUrl || null,
+      handle || null,
+      gender || null,
+      birthday || null,
+      typeof backstageMask === "boolean" ? backstageMask : null,
+      backstageCoverUrl || null
+    ]
+  );
+
+  const result = await query(
+    `select
+      u.id,
+      u.nickname,
+      u.bio,
+      u.avatar_url,
+      up.cover_url,
+      coalesce(up.extra->>'handle', '@'||replace(lower(u.nickname), ' ', '_')) as handle,
+      coalesce(up.extra->>'gender', '') as gender,
+      coalesce(up.extra->>'birthday', '') as birthday,
+      coalesce(up.extra->>'backstageCoverUrl', '') as backstage_cover_url,
+      case
+        when lower(coalesce(up.extra->>'backstageMask', '')) in ('true', 'false')
+          then (up.extra->>'backstageMask')::boolean
+        else null
+      end as backstage_mask
+    from users u
+    left join user_profiles up on up.user_id = u.id
+    where u.id = $1::uuid
+    limit 1`,
+    [userId]
+  );
+
+  return result.rows[0] || null;
 }

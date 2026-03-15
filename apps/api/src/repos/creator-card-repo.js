@@ -1,4 +1,5 @@
 import { query, getPool } from "../db/client.js";
+import crypto from "node:crypto";
 
 const VALID_MODES = new Set(["long_narrative", "short_narrative", "virtual_character"]);
 const VALID_SAVE_STATUS = new Set(["draft", "saved", "archived"]);
@@ -24,10 +25,189 @@ function asJson(value, fallback = {}) {
   return fallback;
 }
 
+function asBoolean(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return fallback;
+  if (["1", "true", "yes", "on", "y"].includes(text)) return true;
+  if (["0", "false", "no", "off", "n"].includes(text)) return false;
+  return fallback;
+}
+
+function extractOpeningLineFromContent(content = {}, mode = "long_narrative") {
+  const src = asJson(content, {});
+  const direct = String(src.openingLine || src.opening_line || "").trim();
+  if (direct) return direct;
+  if (String(mode || "") === "short_narrative") {
+    return String(src.openingAnchor || src.opening_anchor || "").trim();
+  }
+  return "";
+}
+
+function extractOpeningLineAiAssistFromContent(content = {}) {
+  const src = asJson(content, {});
+  return asBoolean(
+    src.openingLineAiAssist
+      ?? src.opening_line_ai_assist
+      ?? src.openingLineUseAi
+      ?? src.opening_line_use_ai
+      ?? false,
+    false
+  );
+}
+
+function stableSortJson(value) {
+  if (Array.isArray(value)) return value.map((item) => stableSortJson(item));
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  Object.keys(value).sort().forEach((key) => {
+    out[key] = stableSortJson(value[key]);
+  });
+  return out;
+}
+
+function computeGameplaySignature(card = {}) {
+  const normalized = {
+    mode: safeMode(card.card_mode),
+    content: asJson(card.content_json, {}),
+    runtime: asJson(card.runtime_config_json, {}),
+    quality: asJson(card.quality_rules_json, {}),
+    promptContext: asJson(card.prompt_context_json, {})
+  };
+  const stable = JSON.stringify(stableSortJson(normalized));
+  return crypto.createHash("sha256").update(stable).digest("hex");
+}
+
 function extractIntroText(payload = {}) {
   const intro = String(payload.intro || "").trim();
   if (!intro) return "";
   return intro.split(/\n+/).map((x) => x.trim()).filter(Boolean).join(" ");
+}
+
+function normalizeMediaUrls(raw = []) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw) {
+    if (typeof item === "string") {
+      const url = String(item || "").trim();
+      if (url) out.push(url);
+      continue;
+    }
+    const url = String(item?.url || item?.mediaUrl || item?.media_url || "").trim();
+    if (url) out.push(url);
+  }
+  return [...new Set(out)].slice(0, 9);
+}
+
+function sameStringList(a = [], b = []) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (String(a[i] || "") !== String(b[i] || "")) return false;
+  }
+  return true;
+}
+
+async function replaceWorldCardDetailMedia(client, worldCardId, mediaUrls = []) {
+  await client.query(
+    `delete from world_card_media
+     where world_card_id = $1
+       and usage_scene = 'detail'`,
+    [worldCardId]
+  );
+  const normalized = normalizeMediaUrls(mediaUrls);
+  if (!normalized.length) return;
+  await client.query(
+    `insert into world_card_media(
+      world_card_id, media_type, media_url, usage_scene, sort_order
+    )
+    select
+      $1::uuid,
+      'image',
+      x.media_url,
+      'detail',
+      x.sort_order
+    from unnest($2::text[], $3::integer[]) as x(media_url, sort_order)`,
+    [worldCardId, normalized, normalized.map((_, idx) => idx)]
+  );
+}
+
+async function patchWorldSessionMessages({
+  worldCardId,
+  title,
+  coverUrl,
+  gameplayVersion,
+  appearanceVersion,
+  status
+}) {
+  const worldId = String(worldCardId || "").trim();
+  if (!worldId) return 0;
+  const result = await query(
+    `update messages
+     set payload = jsonb_set(
+       jsonb_set(
+         jsonb_set(
+           jsonb_set(
+             jsonb_set(coalesce(payload, '{}'::jsonb), '{title}', to_jsonb($2::text), true),
+             '{coverUrl}', to_jsonb($3::text), true
+           ),
+           '{gameplayVersion}', to_jsonb($4::int), true
+         ),
+         '{appearanceVersion}', to_jsonb($5::int), true
+       ),
+       '{status}', to_jsonb($6::text), true
+     )
+     where message_type = 'card'
+       and coalesce(payload->>'kind', '') = 'play_session'
+       and coalesce(payload->>'worldId', '') = $1`,
+    [
+      worldId,
+      String(title || ""),
+      String(coverUrl || ""),
+      Number(gameplayVersion || 1),
+      Number(appearanceVersion || 1),
+      String(status || "active")
+    ]
+  );
+  return Number(result?.rowCount || 0);
+}
+
+function patchWorldSessionMessagesAsync(payload = {}) {
+  void patchWorldSessionMessages(payload).catch(() => {});
+}
+
+async function createCreatorCardPublishLog({
+  creatorCardId,
+  worldCardId,
+  publishPayload,
+  syncToDynamic,
+  createdBy
+}) {
+  return query(
+    `insert into creator_card_publish_logs(
+      creator_card_id, world_card_id, publish_payload_json, sync_to_dynamic, status, created_by
+    ) values ($1,$2,$3::jsonb,$4,'published',$5)`,
+    [
+      creatorCardId,
+      worldCardId,
+      JSON.stringify(asJson(publishPayload, {})),
+      Boolean(syncToDynamic),
+      createdBy
+    ]
+  );
+}
+
+function createCreatorCardPublishLogAsync(payload = {}) {
+  void createCreatorCardPublishLog(payload).catch(() => {});
+}
+
+function extractPublishMediaUrls(publishInfo = {}) {
+  const info = asJson(publishInfo, {});
+  return normalizeMediaUrls(
+    info.mediaUrls
+      || info.media_urls
+      || info.albumMedia
+      || info.album_media
+  );
 }
 
 function buildWorldCardPayload(card, publishPayload = {}) {
@@ -36,8 +216,11 @@ function buildWorldCardPayload(card, publishPayload = {}) {
   const qualityRules = asJson(card.quality_rules_json, {});
   const promptCtx = asJson(card.prompt_context_json, {});
   const mode = safeMode(card.card_mode);
+  const openingLine = extractOpeningLineFromContent(content, mode);
+  const openingLineAiAssist = extractOpeningLineAiAssistFromContent(content);
 
   const title = String(publishPayload.title || card.title || "未命名作品").trim();
+  const cardIntro = String(publishPayload.cardIntro || card.subtitle || "").trim();
   const chapterLabel = String(publishPayload.chapter || "序章").trim();
   const mainQuest = String(
     publishPayload.mainQuest
@@ -53,16 +236,35 @@ function buildWorldCardPayload(card, publishPayload = {}) {
     || "关键角色（待接触）"
   ).trim();
   const keyClues = String(publishPayload.clues || "").trim();
-  const openingSummary = extractIntroText(publishPayload)
+  const introText = extractIntroText(publishPayload) || cardIntro;
+  const openingSummary = introText
     || String(content.openingLine || content.openingAnchor || content.worldSetting || "").trim();
   const playHook = String(publishPayload.playHook || mainQuest).trim();
+  const albumMediaUrls = normalizeMediaUrls(
+    publishPayload.mediaUrls
+      || publishPayload.media_urls
+      || publishPayload.albumMedia
+      || publishPayload.album_media
+      || content.mediaUrls
+      || content.media_urls
+      || content.albumMedia
+      || content.album_media
+  );
+  const coverUrl = String(
+    publishPayload.cover
+    || content.cardBackground
+    || content.card_background
+    || content.cover
+    || content.coverUrl
+    || ""
+  ).trim() || null;
 
   return {
     title,
-    subtitle: String(card.subtitle || `${chapterLabel} · ${mainQuest.slice(0, 12)}`).trim(),
+    subtitle: String(cardIntro || introText || `${chapterLabel} · ${mainQuest.slice(0, 12)}`).trim(),
     setting: String(publishPayload.setting || content.scopeLimits || content.relationBoundary || content.worldSetting || "").trim(),
-    summary: String(publishPayload.summary || mainQuest).trim(),
-    overview: extractIntroText(publishPayload) || String(content.worldSetting || content.openingLine || content.openingAnchor || content.personaCore || "").trim(),
+    summary: String(publishPayload.summary || publishPayload.intro || cardIntro || mainQuest).trim(),
+    overview: introText || String(content.worldSetting || content.openingLine || content.openingAnchor || content.personaCore || "").trim(),
     format: String(publishPayload.format || (mode === "long_narrative" ? "长叙事" : mode === "short_narrative" ? "短叙事" : "虚拟人物")).trim(),
     theme: String(publishPayload.theme || content.toneStyle || content.dialogueStyle || "剧情向").trim(),
     background: String(publishPayload.background || content.personaBackground || "原创世界").trim(),
@@ -74,8 +276,11 @@ function buildWorldCardPayload(card, publishPayload = {}) {
     keyNpc,
     keyClues,
     openingSummary,
+    openingLine,
+    openingLineAiAssist,
     playHook,
-    coverUrl: String(publishPayload.cover || "").trim() || null,
+    coverUrl,
+    mediaUrls: albumMediaUrls,
     sourcePromptVersion: String(promptCtx.promptVersion || "system_prompt_v2"),
     rulesJson: Array.isArray(runtimeCfg.rules) ? runtimeCfg.rules : [],
     playableConfigJson: {
@@ -161,6 +366,10 @@ export async function createCreatorCard({
   npcSeeds,
   eventSeeds
 }) {
+  const normalizedMode = safeMode(cardMode);
+  const safeContent = asJson(contentJson, {});
+  const openingLine = extractOpeningLineFromContent(safeContent, normalizedMode);
+  const openingLineAiAssist = extractOpeningLineAiAssistFromContent(safeContent);
   const pool = getPool();
   const client = await pool.connect();
   try {
@@ -169,26 +378,28 @@ export async function createCreatorCard({
       `insert into creator_cards(
         author_id, card_mode, title, subtitle, template_id,
         content_json, prompt_context_json, runtime_config_json, quality_rules_json, ux_config_json,
-        publish_info_json, save_status, publish_status
+        publish_info_json, save_status, publish_status, opening_line, opening_line_ai_assist
       ) values (
         $1, $2, $3, $4, $5,
         $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-        '{}'::jsonb, $11, $12
+        '{}'::jsonb, $11, $12, $13, $14
       )
       returning *`,
       [
         authorId,
-        safeMode(cardMode),
+        normalizedMode,
         String(title || "未命名卡片"),
         subtitle || null,
         templateId || null,
-        JSON.stringify(asJson(contentJson, {})),
+        JSON.stringify(safeContent),
         JSON.stringify(asJson(promptContextJson, {})),
         JSON.stringify(asJson(runtimeConfigJson, {})),
         JSON.stringify(asJson(qualityRulesJson, {})),
         JSON.stringify(asJson(uxConfigJson, {})),
         safeSaveStatus(saveStatus),
-        safePublishStatus(publishStatus)
+        safePublishStatus(publishStatus),
+        openingLine || null,
+        openingLineAiAssist
       ]
     );
     const card = result.rows[0];
@@ -219,6 +430,16 @@ export async function updateCreatorCardDraft(id, {
   eventSeeds,
   cardMode
 }) {
+  const safeContent = (contentJson && typeof contentJson === "object")
+    ? asJson(contentJson, {})
+    : null;
+  const normalizedMode = cardMode ? safeMode(cardMode) : "";
+  const openingLine = safeContent
+    ? extractOpeningLineFromContent(safeContent, normalizedMode || "long_narrative")
+    : null;
+  const openingLineAiAssist = safeContent
+    ? extractOpeningLineAiAssistFromContent(safeContent)
+    : null;
   const pool = getPool();
   const client = await pool.connect();
   try {
@@ -237,22 +458,26 @@ export async function updateCreatorCardDraft(id, {
          ux_config_json = coalesce($10::jsonb, ux_config_json),
          save_status = coalesce($11, save_status),
          publish_status = coalesce($12, publish_status),
+         opening_line = coalesce($13, opening_line),
+         opening_line_ai_assist = coalesce($14, opening_line_ai_assist),
          updated_at = now()
        where id = $1
        returning *`,
       [
         id,
-        cardMode ? safeMode(cardMode) : null,
+        normalizedMode || null,
         title ? String(title) : null,
         subtitle ?? null,
         templateId ?? null,
-        contentJson ? JSON.stringify(asJson(contentJson, {})) : null,
+        safeContent ? JSON.stringify(safeContent) : null,
         promptContextJson ? JSON.stringify(asJson(promptContextJson, {})) : null,
         runtimeConfigJson ? JSON.stringify(asJson(runtimeConfigJson, {})) : null,
         qualityRulesJson ? JSON.stringify(asJson(qualityRulesJson, {})) : null,
         uxConfigJson ? JSON.stringify(asJson(uxConfigJson, {})) : null,
         saveStatus ? safeSaveStatus(saveStatus) : null,
-        publishStatus ? safePublishStatus(publishStatus) : null
+        publishStatus ? safePublishStatus(publishStatus) : null,
+        openingLine,
+        typeof openingLineAiAssist === "boolean" ? openingLineAiAssist : null
       ]
     );
 
@@ -324,6 +549,46 @@ export async function publishCreatorCard({ id, authorId, publishPayload, syncToD
     }
 
     const mapped = buildWorldCardPayload(card, asJson(publishPayload, {}));
+    const hasPublishedBefore = Boolean(card.published_world_card_id);
+    const previousPublishInfo = asJson(card.publish_info_json, {});
+    const previousMediaUrls = extractPublishMediaUrls(previousPublishInfo);
+    const shouldReplaceDetailMedia = !hasPublishedBefore || !sameStringList(previousMediaUrls, mapped.mediaUrls);
+    const previousSignature = String(card.last_gameplay_signature || "").trim();
+    const nextSignature = computeGameplaySignature(card);
+    let gameplayChanged = false;
+    if (!hasPublishedBefore) {
+      gameplayChanged = true;
+    } else if (previousSignature) {
+      gameplayChanged = previousSignature !== nextSignature;
+    } else {
+      // Legacy published cards may not have signature history.
+      // Default to cosmetic to avoid false "interrupt all sessions" during first republish.
+      gameplayChanged = false;
+    }
+    const publishClass = gameplayChanged ? "gameplay" : "cosmetic";
+    const currentGameplayVersion = Math.max(1, Number(card.gameplay_version || 1) || 1);
+    const currentAppearanceVersion = Math.max(1, Number(card.appearance_version || 1) || 1);
+    const nextGameplayVersion = hasPublishedBefore
+      ? (gameplayChanged ? currentGameplayVersion + 1 : currentGameplayVersion)
+      : currentGameplayVersion;
+    const nextAppearanceVersion = hasPublishedBefore
+      ? (currentAppearanceVersion + 1)
+      : currentAppearanceVersion;
+    const publishSnapshot = {
+      ...asJson(publishPayload, {}),
+      publishClass,
+      gameplayVersion: nextGameplayVersion,
+      appearanceVersion: nextAppearanceVersion
+    };
+    mapped.playableConfigJson = {
+      ...asJson(mapped.playableConfigJson, {}),
+      version_meta: {
+        gameplayVersion: nextGameplayVersion,
+        appearanceVersion: nextAppearanceVersion,
+        publishClass
+      }
+    };
+    mapped.sourcePromptVersion = `${String(mapped.sourcePromptVersion || "system_prompt_v2")}@g${nextGameplayVersion}.a${nextAppearanceVersion}`;
     let worldCard = null;
 
     if (card.published_world_card_id) {
@@ -347,11 +612,16 @@ export async function publishCreatorCard({ id, authorId, publishPayload, syncToD
            key_clues = $16,
            opening_summary = $17,
            play_hook = $18,
-           playable_config_json = $19::jsonb,
-           source_creator_card_id = $20,
-           cover_url = coalesce($21, cover_url),
-           source_prompt_version = $22,
-           rules_json = $23::jsonb,
+           opening_line = $19,
+           opening_line_ai_assist = $20,
+           playable_config_json = $21::jsonb,
+           source_creator_card_id = $22,
+           cover_url = coalesce($23, cover_url),
+           source_prompt_version = $24,
+           rules_json = $25::jsonb,
+           gameplay_version = $26,
+           appearance_version = $27,
+           last_gameplay_change_at = case when $28::boolean then now() else last_gameplay_change_at end,
            publish_status = 'published',
            visibility = 'public',
            updated_at = now()
@@ -376,11 +646,16 @@ export async function publishCreatorCard({ id, authorId, publishPayload, syncToD
           mapped.keyClues,
           mapped.openingSummary,
           mapped.playHook,
+          mapped.openingLine || null,
+          mapped.openingLineAiAssist,
           JSON.stringify(mapped.playableConfigJson),
           card.id,
           mapped.coverUrl,
           mapped.sourcePromptVersion,
-          JSON.stringify(mapped.rulesJson)
+          JSON.stringify(mapped.rulesJson),
+          nextGameplayVersion,
+          nextAppearanceVersion,
+          gameplayChanged
         ]
       );
       worldCard = updated.rows[0] || null;
@@ -390,15 +665,19 @@ export async function publishCreatorCard({ id, authorId, publishPayload, syncToD
           author_id, title, subtitle, setting, summary, overview,
           format, theme, background, recommend_tag, time_tag,
           mode, chapter_label, main_quest, key_npc, key_clues, opening_summary, play_hook,
+          opening_line, opening_line_ai_assist,
           playable_config_json, source_creator_card_id,
           cover_url, source_prompt_version, rules_json,
+          gameplay_version, appearance_version, last_gameplay_change_at,
           publish_status, visibility, is_test
         ) values (
           $1,$2,$3,$4,$5,$6,
           $7,$8,$9,$10,$11,
           $12,$13,$14,$15,$16,$17,$18,
-          $19::jsonb,$20,
-          $21,$22,$23::jsonb,
+          $19,$20,
+          $21::jsonb,$22,
+          $23,$24,$25::jsonb,
+          $26,$27,case when $28::boolean then now() else null end,
           'published','public',false
         )
         returning *`,
@@ -421,11 +700,16 @@ export async function publishCreatorCard({ id, authorId, publishPayload, syncToD
           mapped.keyClues,
           mapped.openingSummary,
           mapped.playHook,
+          mapped.openingLine || null,
+          mapped.openingLineAiAssist,
           JSON.stringify(mapped.playableConfigJson),
           card.id,
           mapped.coverUrl,
           mapped.sourcePromptVersion,
-          JSON.stringify(mapped.rulesJson)
+          JSON.stringify(mapped.rulesJson),
+          nextGameplayVersion,
+          nextAppearanceVersion,
+          gameplayChanged
         ]
       );
       worldCard = inserted.rows[0] || null;
@@ -436,6 +720,29 @@ export async function publishCreatorCard({ id, authorId, publishPayload, syncToD
       throw new Error("WORLD_CARD_PUBLISH_FAILED");
     }
 
+    if (shouldReplaceDetailMedia) {
+      await replaceWorldCardDetailMedia(client, worldCard.id, mapped.mediaUrls);
+    }
+
+    let interruptedSessions = [];
+    if (gameplayChanged) {
+      const interrupted = await client.query(
+        `update game_sessions
+         set status = 'interrupted',
+             interrupted_at = now(),
+             interrupted_reason = 'WORLD_CARD_UPDATED',
+             updated_at = now()
+         where world_card_id = $1::uuid
+           and deleted_at is null
+           and status in ('active', 'paused')
+           and coalesce(gameplay_version, 1) < $2
+           and ended_at is null
+         returning id, user_id, world_card_id, gameplay_version`,
+        [worldCard.id, nextGameplayVersion]
+      );
+      interruptedSessions = interrupted.rows;
+    }
+
     const updatedCard = await client.query(
       `update creator_cards
        set
@@ -443,25 +750,50 @@ export async function publishCreatorCard({ id, authorId, publishPayload, syncToD
          publish_status = 'published',
          published_world_card_id = $2,
          publish_info_json = $3::jsonb,
+         gameplay_version = $4,
+         appearance_version = $5,
+         last_gameplay_signature = $6,
+         last_publish_class = $7,
          published_at = now(),
          updated_at = now()
        where id = $1
        returning *`,
-      [card.id, worldCard.id, JSON.stringify(asJson(publishPayload, {}))]
-    );
-
-    await client.query(
-      `insert into creator_card_publish_logs(
-        creator_card_id, world_card_id, publish_payload_json, sync_to_dynamic, status, created_by
-      ) values ($1,$2,$3::jsonb,$4,'published',$5)`,
-      [card.id, worldCard.id, JSON.stringify(asJson(publishPayload, {})), Boolean(syncToDynamic), card.author_id]
+      [
+        card.id,
+        worldCard.id,
+        JSON.stringify(publishSnapshot),
+        nextGameplayVersion,
+        nextAppearanceVersion,
+        nextSignature,
+        publishClass
+      ]
     );
 
     await client.query("commit");
+    patchWorldSessionMessagesAsync({
+      worldCardId: worldCard.id,
+      title: mapped.title,
+      coverUrl: mapped.coverUrl,
+      gameplayVersion: nextGameplayVersion,
+      appearanceVersion: nextAppearanceVersion,
+      status: gameplayChanged ? "restart_required" : "active"
+    });
+    createCreatorCardPublishLogAsync({
+      creatorCardId: card.id,
+      worldCardId: worldCard.id,
+      publishPayload: publishSnapshot,
+      syncToDynamic,
+      createdBy: card.author_id
+    });
 
     return {
       creatorCard: updatedCard.rows[0] || card,
-      worldCard
+      worldCard,
+      publishClass,
+      gameplayChanged,
+      gameplayVersion: nextGameplayVersion,
+      appearanceVersion: nextAppearanceVersion,
+      interruptedSessions
     };
   } catch (error) {
     await client.query("rollback");

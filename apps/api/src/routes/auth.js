@@ -11,6 +11,7 @@ import {
   listUsers,
   revokeSessionByTokenHash,
   setFollowRelation,
+  updateUserProfile,
   userExistsById
 } from "../repos/auth-repo.js";
 import { invalidateBootstrapCoreCache } from "./bootstrap.js";
@@ -26,6 +27,8 @@ import {
   resolveSessionUser,
   shouldUseSecureCookie
 } from "../core/session.js";
+import { uploadPossibleDataUrl } from "../services/media-storage.js";
+import { createNotification } from "../repos/notification-repo.js";
 
 function verifyPassword(inputPassword, storedHash) {
   if (!storedHash) return false;
@@ -34,6 +37,33 @@ function verifyPassword(inputPassword, storedHash) {
   // Seed data fallback for demo accounts.
   if (storedHash === "seed_password_hash" && inputPassword === "123456") return true;
   return false;
+}
+
+function normalizeGenderValue(input) {
+  const raw = String(input || "").trim();
+  if (["男", "male", "男生"].includes(raw)) return "男";
+  if (["女", "female", "女生"].includes(raw)) return "女";
+  if (["保密", "secret", "unknown"].includes(raw)) return "保密";
+  return "保密";
+}
+
+function normalizeBirthdayValue(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return "";
+  const d = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  if (d.getTime() > now.getTime()) return "";
+  return raw;
+}
+
+function normalizeBooleanFlag(input, fallback = false) {
+  if (typeof input === "boolean") return input;
+  const raw = String(input ?? "").trim().toLowerCase();
+  if (raw === "true" || raw === "1" || raw === "yes" || raw === "on") return true;
+  if (raw === "false" || raw === "0" || raw === "no" || raw === "off") return false;
+  return Boolean(fallback);
 }
 
 export async function handleAuth(req, res, pathname) {
@@ -85,6 +115,21 @@ export async function handleAuth(req, res, pathname) {
     }
 
     await setFollowRelation({ followerId, followingId: followingUserId, follow });
+    if (follow) {
+      void createNotification({
+        userId: followingUserId,
+        type: "new_follow",
+        title: "新增关注",
+        content: "开始关注你了",
+        actorId: followerId,
+        targetType: "user_follow",
+        targetId: followerId,
+        extra: {
+          followerId,
+          followingUserId
+        }
+      }).catch(() => {});
+    }
     const [followedByMe, targetStats, meStats] = await Promise.all([
       getFollowRelation(followerId, followingUserId),
       getFollowStats(followingUserId),
@@ -99,6 +144,87 @@ export async function handleAuth(req, res, pathname) {
         targetStats,
         meStats
       }
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/auth/profile") {
+    const body = await parseBody(req);
+    const userId = String(body.userId || "").trim();
+    const name = String(body.name || "").trim();
+    const handle = String(body.handle || "").trim();
+    const bio = String(body.bio || "").trim();
+    const avatarUrlInput = String(body.avatarUrl || "").trim();
+    const coverUrlInput = String(body.coverUrl || "").trim();
+    const backstageCoverUrlInput = String(body.backstageCoverUrl || "").trim();
+    const gender = normalizeGenderValue(body.gender);
+    const birthday = normalizeBirthdayValue(body.birthday);
+    const hasBackstageMask = Object.prototype.hasOwnProperty.call(body, "backstageMask");
+    const backstageMask = hasBackstageMask ? normalizeBooleanFlag(body.backstageMask, true) : null;
+
+    if (!userId || !name) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "userId and name are required" });
+    }
+    if (name.length > 24) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "昵称最多 24 个字符" });
+    }
+    if (bio.length > 300) {
+      return json(res, 400, { code: "INVALID_INPUT", message: "个人介绍最多 300 个字符" });
+    }
+
+    const exists = await userExistsById(userId);
+    if (!exists) {
+      return json(res, 404, { code: "USER_NOT_FOUND", message: "user not found" });
+    }
+
+    let avatarUrl = avatarUrlInput;
+    let coverUrl = coverUrlInput;
+    let backstageCoverUrl = backstageCoverUrlInput;
+    try {
+      avatarUrl = await uploadPossibleDataUrl(avatarUrlInput, {
+        folder: "profile/avatar",
+        maxBytes: 2 * 1024 * 1024
+      });
+      coverUrl = await uploadPossibleDataUrl(coverUrlInput, {
+        folder: "profile/cover",
+        maxBytes: 3 * 1024 * 1024
+      });
+      backstageCoverUrl = await uploadPossibleDataUrl(backstageCoverUrlInput, {
+        folder: "profile/backstage-cover",
+        maxBytes: 3 * 1024 * 1024
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "PROFILE_MEDIA_UPLOAD_FAILED";
+      return json(res, 400, { code: "PROFILE_MEDIA_UPLOAD_FAILED", message });
+    }
+
+    const profile = await updateUserProfile({
+      userId,
+      name,
+      handle,
+      bio,
+      avatarUrl,
+      coverUrl,
+      backstageCoverUrl,
+      gender,
+      birthday,
+      backstageMask
+    });
+    invalidateBootstrapCoreCache();
+    return json(res, 200, {
+      profile: profile
+        ? {
+            id: profile.id,
+            name: profile.nickname || "Drama 用户",
+            handle: profile.handle || "@drama_user",
+            bio: profile.bio || "",
+            avatarUrl: profile.avatar_url || "",
+            coverUrl: profile.cover_url || "",
+            backstageCoverUrl: profile.backstage_cover_url || "",
+            gender: profile.gender || "保密",
+            birthday: profile.birthday || "",
+            backstageMask: profile.backstage_mask !== false
+          }
+        : null
     });
   }
 

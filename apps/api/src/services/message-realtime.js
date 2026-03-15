@@ -76,3 +76,18 @@ export function publishMessageEventToUsers(userIds, event, payload) {
     }
   }
 }
+
+export function publishMessageEventToAllUsers(event, payload, options = {}) {
+  const excluded = new Set(
+    Array.isArray(options?.excludeUserIds)
+      ? options.excludeUserIds.map((x) => String(x || "").trim()).filter(Boolean)
+      : []
+  );
+  for (const [userId, clients] of clientsByUserId.entries()) {
+    if (excluded.has(userId)) continue;
+    if (!clients?.size) continue;
+    for (const client of clients) {
+      writeSse(client.res, event, payload);
+    }
+  }
+}

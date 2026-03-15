@@ -107,7 +107,8 @@ export async function setWorldCardInteraction({
       `select
         world_card_id,
         likes_count,
-        favorites_count
+        favorites_count,
+        updated_at
        from world_card_stats
        where world_card_id = $1
        limit 1`,
@@ -135,10 +136,15 @@ export async function setWorldCardInteraction({
     await client.query("commit");
     return {
       worldCardId,
+      interactionType: type,
+      active: Boolean(active),
       likesCount: Number(statsRes.rows[0]?.likes_count || 0),
       favoritesCount: Number(statsRes.rows[0]?.favorites_count || 0),
       likedByMe: Boolean(statusRes.rows[0]?.liked_by_me),
-      favoritedByMe: Boolean(statusRes.rows[0]?.favorited_by_me)
+      favoritedByMe: Boolean(statusRes.rows[0]?.favorited_by_me),
+      version: statsRes.rows[0]?.updated_at
+        ? new Date(statsRes.rows[0].updated_at).toISOString()
+        : new Date().toISOString()
     };
   } catch (err) {
     await client.query("rollback");
@@ -178,34 +184,70 @@ export async function listWorldCardComments(worldCardId, userId = "", limit = 10
   let replyRows = [];
   if (parentIds.length) {
     const replyRes = await query(
-      `select
-         c.id,
-         c.world_card_id,
-         c.user_id,
-         c.parent_comment_id,
-         c.content,
-         c.likes_count,
-         c.created_at,
-         c.updated_at,
-         coalesce(u.nickname, '玩家') as user_name,
-         false as liked_by_me
-       from world_card_comments c
-       left join users u on u.id = c.user_id
-       where c.parent_comment_id = any($1::uuid[])
-         and c.deleted_at is null
-         and c.status = 'active'
-       order by c.created_at asc`,
+      `with recursive thread as (
+         select
+           c.id,
+           c.world_card_id,
+           c.user_id,
+           c.parent_comment_id,
+           c.content,
+           c.likes_count,
+           c.created_at,
+           c.updated_at,
+           coalesce(u.nickname, '玩家') as user_name,
+           false as liked_by_me
+         from world_card_comments c
+         left join users u on u.id = c.user_id
+         where c.parent_comment_id = any($1::uuid[])
+           and c.deleted_at is null
+           and c.status = 'active'
+         union all
+         select
+           c.id,
+           c.world_card_id,
+           c.user_id,
+           c.parent_comment_id,
+           c.content,
+           c.likes_count,
+           c.created_at,
+           c.updated_at,
+           coalesce(u.nickname, '玩家') as user_name,
+           false as liked_by_me
+         from world_card_comments c
+         left join users u on u.id = c.user_id
+         join thread t on c.parent_comment_id = t.id
+         where c.deleted_at is null
+           and c.status = 'active'
+       )
+       select *
+       from thread
+       order by created_at asc`,
       [parentIds]
     );
     replyRows = Array.isArray(replyRes.rows) ? replyRes.rows : [];
   }
-  const replyByParent = replyRows.reduce((acc, row) => {
-    const pid = String(row.parent_comment_id || "").trim();
-    if (!pid) return acc;
-    if (!acc[pid]) acc[pid] = [];
-    acc[pid].push(row);
-    return acc;
-  }, {});
+  const rowById = new Map();
+  parentRows.forEach((row) => {
+    const id = String(row?.id || "").trim();
+    if (!id) return;
+    rowById.set(id, { ...row, replies: [] });
+  });
+  const replyOrder = [];
+  replyRows.forEach((row) => {
+    const id = String(row?.id || "").trim();
+    if (!id || rowById.has(id)) return;
+    rowById.set(id, { ...row, replies: [] });
+    replyOrder.push(id);
+  });
+  replyOrder.forEach((id) => {
+    const node = rowById.get(id);
+    if (!node) return;
+    const pid = String(node.parent_comment_id || "").trim();
+    const parent = pid ? rowById.get(pid) : null;
+    if (!parent) return;
+    if (!Array.isArray(parent.replies)) parent.replies = [];
+    parent.replies.push(node);
+  });
   const countRes = await query(
     `select count(*)::int as total_count
      from world_card_comments
@@ -216,10 +258,9 @@ export async function listWorldCardComments(worldCardId, userId = "", limit = 10
     [worldCardId]
   );
   return {
-    comments: parentRows.map((row) => ({
-      ...row,
-      replies: replyByParent[String(row.id || "")] || []
-    })),
+    comments: parentRows
+      .map((row) => rowById.get(String(row?.id || "").trim()) || null)
+      .filter(Boolean),
     totalCount: Number(countRes.rows[0]?.total_count || 0)
   };
 }
@@ -228,8 +269,10 @@ export async function createWorldCardComment({
   worldCardId,
   userId,
   content,
-  parentCommentId = null
+  parentCommentId = null,
+  clientToken = null
 }) {
+  const safeToken = String(clientToken || "").trim() || null;
   const pool = getPool();
   const client = await pool.connect();
   try {
@@ -247,12 +290,34 @@ export async function createWorldCardComment({
       return null;
     }
 
-    const inserted = await client.query(
-      `insert into world_card_comments(world_card_id, user_id, parent_comment_id, content, status)
-       values ($1, $2, $3, $4, 'active')
-       returning id, world_card_id, user_id, parent_comment_id, content, likes_count, created_at, updated_at`,
-      [worldCardId, userId, parentCommentId, content]
+    const insertedRaw = await client.query(
+      `insert into world_card_comments(world_card_id, user_id, parent_comment_id, content, status, client_token)
+       values ($1, $2, $3, $4, 'active', $5)
+       on conflict (world_card_id, user_id, client_token)
+       where client_token is not null
+       do nothing
+       returning id, world_card_id, user_id, parent_comment_id, content, likes_count, created_at, updated_at, client_token`,
+      [worldCardId, userId, parentCommentId, content, safeToken]
     );
+    let row = insertedRaw.rows[0] || null;
+    const insertedNew = Boolean(row?.id);
+    if (!row && safeToken) {
+      const existed = await client.query(
+        `select id, world_card_id, user_id, parent_comment_id, content, likes_count, created_at, updated_at, client_token
+         from world_card_comments
+         where world_card_id = $1
+           and user_id = $2
+           and client_token = $3
+         order by created_at desc
+         limit 1`,
+        [worldCardId, userId, safeToken]
+      );
+      row = existed.rows[0] || null;
+    }
+    if (!row) {
+      await client.query("rollback");
+      return null;
+    }
 
     await client.query(
       `insert into world_card_stats(world_card_id)
@@ -261,13 +326,15 @@ export async function createWorldCardComment({
       [worldCardId]
     );
 
-    await client.query(
-      `update world_card_stats
-       set comments_count = comments_count + 1,
-           updated_at = now()
-       where world_card_id = $1`,
-      [worldCardId]
-    );
+    if (insertedNew) {
+      await client.query(
+        `update world_card_stats
+         set comments_count = comments_count + 1,
+             updated_at = now()
+         where world_card_id = $1`,
+        [worldCardId]
+      );
+    }
 
     const countRes = await client.query(
       `select count(*)::int as total_count
@@ -279,7 +346,6 @@ export async function createWorldCardComment({
       [worldCardId]
     );
 
-    const row = inserted.rows[0] || null;
     const userRes = row
       ? await client.query(
           `select coalesce(nickname, '玩家') as user_name
@@ -296,7 +362,8 @@ export async function createWorldCardComment({
         ? {
             ...row,
             user_name: String(userRes.rows[0]?.user_name || "玩家"),
-            liked_by_me: false
+            liked_by_me: false,
+            version: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString()
           }
         : null,
       commentsCount: Number(countRes.rows[0]?.total_count || 0)
@@ -335,28 +402,47 @@ export async function setWorldCardCommentLike({
     const worldCardId = commentRes.rows[0].world_card_id;
 
     if (active) {
-      await client.query(
-        `update world_card_comments
-         set likes_count = likes_count + 1,
-             updated_at = now()
-         where id = $1`,
-        [commentId]
+      const inserted = await client.query(
+        `insert into world_card_comment_likes(comment_id, user_id)
+         values ($1, $2)
+         on conflict (comment_id, user_id) do nothing
+         returning id`,
+        [commentId, userId]
       );
+      if (inserted.rowCount > 0) {
+        await client.query(
+          `update world_card_comments
+           set likes_count = likes_count + 1,
+               updated_at = now()
+           where id = $1`,
+          [commentId]
+        );
+      }
     } else {
-      await client.query(
-        `update world_card_comments
-         set likes_count = greatest(0, likes_count - 1),
-             updated_at = now()
-         where id = $1`,
-        [commentId]
+      const deleted = await client.query(
+        `delete from world_card_comment_likes
+         where comment_id = $1
+           and user_id = $2
+         returning id`,
+        [commentId, userId]
       );
+      if (deleted.rowCount > 0) {
+        await client.query(
+          `update world_card_comments
+           set likes_count = greatest(0, likes_count - 1),
+               updated_at = now()
+           where id = $1`,
+          [commentId]
+        );
+      }
     }
 
     const latestRes = await client.query(
       `select
         c.id,
         c.world_card_id,
-        c.likes_count
+        c.likes_count,
+        c.updated_at
        from world_card_comments c
        where c.id = $1
        limit 1`,
@@ -368,9 +454,10 @@ export async function setWorldCardCommentLike({
     if (!row) return null;
     return {
       commentId: row.id,
-      worldCardId,
+      worldCardId: row.world_card_id || worldCardId,
       likesCount: Number(row.likes_count || 0),
-      likedByMe: Boolean(active)
+      likedByMe: Boolean(active),
+      version: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString()
     };
   } catch (err) {
     await client.query("rollback");
@@ -408,37 +495,30 @@ export async function deleteWorldCardComment({
       return { status: "forbidden" };
     }
 
-    let deletedCount = 0;
-    let topLevelDeleted = 0;
-    if (target.parent_comment_id) {
-      const deleted = await client.query(
-        `update world_card_comments
-         set status = 'deleted',
-             deleted_at = now(),
-             updated_at = now()
+    const deleted = await client.query(
+      `with recursive target_tree as (
+         select id, parent_comment_id
+         from world_card_comments
          where id = $1
            and deleted_at is null
            and status = 'active'
-         returning id, parent_comment_id`,
-        [commentId]
-      );
-      deletedCount = deleted.rowCount;
-      topLevelDeleted = 0;
-    } else {
-      const deleted = await client.query(
-        `update world_card_comments
-         set status = 'deleted',
-             deleted_at = now(),
-             updated_at = now()
-         where (id = $1 or parent_comment_id = $1)
-           and deleted_at is null
-           and status = 'active'
-         returning id, parent_comment_id`,
-        [commentId]
-      );
-      deletedCount = deleted.rowCount;
-      topLevelDeleted = deleted.rows.filter((row) => !row.parent_comment_id).length;
-    }
+         union all
+         select c.id, c.parent_comment_id
+         from world_card_comments c
+         join target_tree t on c.parent_comment_id = t.id
+         where c.deleted_at is null
+           and c.status = 'active'
+       )
+       update world_card_comments c
+       set status = 'deleted',
+           deleted_at = now(),
+           updated_at = now()
+       where c.id in (select id from target_tree)
+       returning c.id, c.parent_comment_id`,
+      [commentId]
+    );
+    const deletedCount = deleted.rowCount;
+    const topLevelDeleted = deleted.rows.filter((row) => !row.parent_comment_id).length;
 
     if (deletedCount > 0) {
       await client.query(

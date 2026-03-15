@@ -3,7 +3,7 @@ import path from "node:path";
 import fsSync from "node:fs";
 import { fileURLToPath } from "node:url";
 import { warmBootstrapCoreCache } from "./routes/bootstrap.js";
-import { initDatabase } from "./db/init.js";
+import { initDatabase, ensureRuntimeSchemaCompat } from "./db/init.js";
 import { handleHttp } from "./app.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -32,15 +32,48 @@ const host = process.env.HOST || "127.0.0.1";
 
 const server = http.createServer(handleHttp);
 
-async function bootstrap() {
+let bootstrapRecoveryTimer = null;
+
+async function warmupRuntime() {
   if (process.env.AUTO_INIT_DB === "true") {
     await initDatabase();
+  } else {
+    await ensureRuntimeSchemaCompat();
   }
   await warmBootstrapCoreCache();
+}
+
+function scheduleBootstrapRecovery() {
+  if (bootstrapRecoveryTimer) return;
+  bootstrapRecoveryTimer = setInterval(() => {
+    void warmupRuntime()
+      .then(() => {
+        if (bootstrapRecoveryTimer) {
+          clearInterval(bootstrapRecoveryTimer);
+          bootstrapRecoveryTimer = null;
+        }
+        console.log("[bootstrap] runtime warmup recovered");
+      })
+      .catch(() => {
+        // keep retrying in background
+      });
+  }, 15000);
+}
+
+async function bootstrap() {
+  let degradedMode = false;
+  try {
+    await warmupRuntime();
+  } catch (error) {
+    degradedMode = true;
+    const msg = error instanceof Error ? error.message : String(error || "unknown");
+    console.error("[bootstrap] runtime warmup failed, starting in degraded mode:", msg);
+  }
 
   server.listen(port, host, () => {
-    console.log(`immersion-api listening on http://${host}:${port}`);
+    console.log(`immersion-api listening on http://${host}:${port}${degradedMode ? " (degraded mode)" : ""}`);
   });
+  if (degradedMode) scheduleBootstrapRecovery();
 }
 
 bootstrap().catch((error) => {

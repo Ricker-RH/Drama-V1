@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveRuntimeModelConfig } from "./model-router.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -212,6 +213,160 @@ function extractTagged(text, tagName) {
   const re = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
   const m = String(text || "").match(re);
   return m?.[1]?.trim() || "";
+}
+
+function normalizeModelTextContent(raw) {
+  if (typeof raw === "string") return raw;
+  if (!raw) return "";
+  if (Array.isArray(raw)) {
+    return raw
+      .map((item) => normalizeModelTextContent(item))
+      .filter(Boolean)
+      .join("");
+  }
+  if (typeof raw === "object") {
+    const text = typeof raw.text === "string" ? raw.text : "";
+    if (text) return text;
+    const content = normalizeModelTextContent(raw.content);
+    if (content) return content;
+    const value = typeof raw.value === "string" ? raw.value : "";
+    if (value) return value;
+    const outputText = typeof raw.output_text === "string" ? raw.output_text : "";
+    if (outputText) return outputText;
+  }
+  return "";
+}
+
+function stripMarkdownFence(text = "") {
+  const src = String(text || "").trim();
+  if (!src) return "";
+  const wrapped = src.match(/^```(?:json|markdown|md|text)?\s*([\s\S]*?)\s*```$/i);
+  if (wrapped?.[1]) return wrapped[1].trim();
+  return src.replace(/^```(?:json|markdown|md|text)?\s*/i, "").replace(/```$/i, "").trim();
+}
+
+function findFirstJsonObjectSpan(text = "") {
+  const src = String(text || "");
+  for (let start = src.indexOf("{"); start >= 0; start = src.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < src.length; i += 1) {
+      const ch = src[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === "\"") inString = false;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = true;
+        continue;
+      }
+      if (ch === "{") depth += 1;
+      if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          return {
+            start,
+            end: i + 1,
+            jsonText: src.slice(start, i + 1)
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function parseJsonObjectCandidate(text = "") {
+  const src = stripMarkdownFence(String(text || "").replace(/^JSON_BLOCK\s*[:：]?\s*/i, "").trim());
+  if (!src) return null;
+  try {
+    const parsed = JSON.parse(src);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {
+    // continue to balanced-object extraction
+  }
+  const span = findFirstJsonObjectSpan(src);
+  if (!span?.jsonText) return null;
+  try {
+    const parsed = JSON.parse(span.jsonText);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function looksLikeTurnJsonBlock(obj) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
+  const keys = Object.keys(obj);
+  if (!keys.length) return false;
+  return ["turn", "mode", "director", "state_delta", "quality", "version"].some((k) => k in obj);
+}
+
+function extractJsonBlockObject(content = "") {
+  const src = String(content || "");
+  const candidates = [];
+  const tagged = extractTagged(src, "JSON_BLOCK");
+  if (tagged) candidates.push(tagged);
+  const labelSection = src.match(
+    /(?:^|\n)\s*JSON_BLOCK\s*[:：]?\s*([\s\S]*?)(?=\n\s*(?:NARRATIVE_BLOCK|<NARRATIVE_BLOCK>)\b|$)/i
+  )?.[1];
+  if (labelSection) candidates.push(labelSection);
+  const fencedJson = src.match(/```json\s*([\s\S]*?)\s*```/i)?.[1];
+  if (fencedJson) candidates.push(fencedJson);
+  candidates.push(src);
+
+  let fallbackObj = null;
+  for (const candidate of candidates) {
+    const parsed = parseJsonObjectCandidate(candidate);
+    if (!parsed) continue;
+    if (!fallbackObj) fallbackObj = parsed;
+    if (looksLikeTurnJsonBlock(parsed)) return parsed;
+  }
+  return fallbackObj;
+}
+
+function extractNarrativeBlockText(content = "") {
+  const src = String(content || "");
+  const tagged = extractTagged(src, "NARRATIVE_BLOCK");
+  if (tagged) return stripMarkdownFence(tagged);
+
+  const labeled = src.match(/(?:^|\n)\s*NARRATIVE_BLOCK\s*[:：]?\s*([\s\S]*)$/i)?.[1];
+  if (labeled) return stripMarkdownFence(labeled);
+
+  const closeTagMatch = src.match(/<\/JSON_BLOCK>/i);
+  if (closeTagMatch?.index >= 0) {
+    const tail = src.slice(closeTagMatch.index + closeTagMatch[0].length).trim();
+    const cleanedTail = stripMarkdownFence(
+      tail
+        .replace(/^<NARRATIVE_BLOCK>/i, "")
+        .replace(/<\/NARRATIVE_BLOCK>$/i, "")
+        .replace(/^NARRATIVE_BLOCK\s*[:：]?\s*/i, "")
+        .trim()
+    );
+    if (cleanedTail) return cleanedTail;
+  }
+
+  const span = findFirstJsonObjectSpan(src);
+  if (span?.end) {
+    const tail = src.slice(span.end).trim();
+    const cleanedTail = stripMarkdownFence(
+      tail
+        .replace(/^NARRATIVE_BLOCK\s*[:：]?\s*/i, "")
+        .trim()
+    );
+    if (cleanedTail) return cleanedTail;
+  }
+  return "";
 }
 
 function extractResultSection(narrativeText) {
@@ -795,19 +950,23 @@ function evaluateNarrativeQuality({ narrativeText, turnIndex, input, sessionMeta
   return { issues, hardFailures, anchors, detailMemory };
 }
 
-function parseModelOutput(content, turnIndex, input, sessionMeta) {
-  const jsonText = extractTagged(content, "JSON_BLOCK");
-  const narrativeText = extractTagged(content, "NARRATIVE_BLOCK");
-  if (!jsonText) return fallbackTurn({ provider: "openai", providerReason: "missing_json_block", retryable: true });
+function parseModelOutput(content, turnIndex, input, sessionMeta, provider = "openai") {
+  const jsonBlock = extractJsonBlockObject(content);
+  const narrativeText = extractNarrativeBlockText(content);
+  if (!jsonBlock) {
+    return {
+      ...fallbackTurn({ provider, providerReason: "missing_json_block", retryable: true }),
+      narrativeBlock: narrativeText || ""
+    };
+  }
   try {
-    const jsonBlock = JSON.parse(jsonText);
-    if (!narrativeText) return fallbackTurn({ provider: "openai", providerReason: "missing_narrative_block", retryable: true });
+    if (!narrativeText) return fallbackTurn({ provider, providerReason: "missing_narrative_block", retryable: true });
     const narrativeBlock = narrativeText;
     if (turnIndex === 1 && !isOpeningTurnQualified(narrativeBlock, sessionMeta)) {
       return {
         failed: true,
         retryable: true,
-        provider: "openai",
+        provider,
         providerReason: "opening_gate_failed",
         jsonBlock,
         narrativeBlock
@@ -829,7 +988,7 @@ function parseModelOutput(content, turnIndex, input, sessionMeta) {
       return {
         failed: true,
         retryable: true,
-        provider: "openai",
+        provider,
         providerReason: "quality_gate_failed:choices_not_grounded",
         jsonBlock,
         narrativeBlock,
@@ -843,7 +1002,7 @@ function parseModelOutput(content, turnIndex, input, sessionMeta) {
       return {
         failed: true,
         retryable: true,
-        provider: "openai",
+        provider,
         providerReason: `quality_gate_failed:${qualityEval.issues.join(",")}`,
         jsonBlock,
         narrativeBlock,
@@ -853,9 +1012,9 @@ function parseModelOutput(content, turnIndex, input, sessionMeta) {
         detailMemory: qualityEval.detailMemory || []
       };
     }
-    return { jsonBlock, narrativeBlock, provider: "openai", providerReason: "" };
+    return { jsonBlock, narrativeBlock, provider, providerReason: "" };
   } catch {
-    return fallbackTurn({ provider: "openai", providerReason: "json_parse_failed", retryable: true });
+    return fallbackTurn({ provider, providerReason: "json_parse_failed", retryable: true });
   }
 }
 
@@ -940,7 +1099,7 @@ async function streamModelWithNarrativeDelta({
           } catch {
             continue;
           }
-          const delta = String(parsed?.choices?.[0]?.delta?.content || "");
+          const delta = normalizeModelTextContent(parsed?.choices?.[0]?.delta?.content);
           if (!delta) continue;
           fullContent += delta;
           const visible = extractNarrativeVisibleText(fullContent);
@@ -960,20 +1119,19 @@ async function streamModelWithNarrativeDelta({
 
 export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {} }) {
   const systemPrompt = await loadSystemPrompt();
-  const apiKey = process.env.OPENAI_API_KEY;
-  const apiBase = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const envTemp = Number.parseFloat(String(process.env.OPENAI_TEMPERATURE || ""));
-  const temperature = Number.isFinite(envTemp)
-    ? envTemp
-    : model.startsWith("kimi")
-      ? 0.6
-      : 0.7;
-  const timeoutMsRaw = Number.parseInt(String(process.env.OPENAI_TIMEOUT_MS || "60000"), 10);
-  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 60000;
+  const modelConfig = resolveRuntimeModelConfig(sessionMeta?.model);
+  const {
+    provider,
+    apiKey,
+    apiBase,
+    model,
+    temperature,
+    timeoutMs
+  } = modelConfig;
 
   if (!apiKey) {
-    return fallbackTurn({ provider: "error", providerReason: "missing_api_key" });
+    const keyName = provider === "xai" ? "XAI_API_KEY" : "OPENAI_API_KEY";
+    return fallbackTurn({ provider: "error", providerReason: `missing_api_key:${keyName}` });
   }
 
   const runtimeMode = normalizeMode(sessionMeta.mode || sessionMeta?.storyContext?.mode || "");
@@ -1038,8 +1196,8 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
       }
 
       const data = await resp.json();
-      const content = data?.choices?.[0]?.message?.content || "";
-      return parseModelOutput(content, turnIndex, input, sessionMeta);
+      const content = normalizeModelTextContent(data?.choices?.[0]?.message?.content);
+      return parseModelOutput(content, turnIndex, input, sessionMeta, provider);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "unknown";
       return fallbackTurn({
@@ -1062,9 +1220,12 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
   if (!result?.failed || !result.retryable) return result;
 
   const overrideMaxAttempts = Number.parseInt(String(options?.maxAttempts ?? ""), 10);
+  const retryAttemptsEnv = provider === "xai"
+    ? process.env.XAI_RETRY_MAX_ATTEMPTS
+    : process.env.OPENAI_RETRY_MAX_ATTEMPTS;
   const maxAttemptsRaw = Number.isFinite(overrideMaxAttempts) && overrideMaxAttempts > 0
     ? overrideMaxAttempts
-    : Number.parseInt(String(process.env.OPENAI_RETRY_MAX_ATTEMPTS || "5"), 10);
+    : Number.parseInt(String(retryAttemptsEnv || "5"), 10);
   const maxAttempts = Number.isFinite(maxAttemptsRaw) ? Math.max(2, Math.min(8, maxAttemptsRaw)) : 5;
   for (let attempt = 2; attempt <= maxAttempts; attempt += 1) {
     const retryLines = [
@@ -1133,20 +1294,19 @@ export async function runStoryTurn({ turnIndex, input, sessionMeta, options = {}
 
 export async function runStoryTurnStream({ turnIndex, input, sessionMeta, onNarrativeDelta }) {
   const systemPrompt = await loadSystemPrompt();
-  const apiKey = process.env.OPENAI_API_KEY;
-  const apiBase = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const envTemp = Number.parseFloat(String(process.env.OPENAI_TEMPERATURE || ""));
-  const temperature = Number.isFinite(envTemp)
-    ? envTemp
-    : model.startsWith("kimi")
-      ? 0.6
-      : 0.7;
-  const timeoutMsRaw = Number.parseInt(String(process.env.OPENAI_TIMEOUT_MS || "60000"), 10);
-  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 60000;
+  const modelConfig = resolveRuntimeModelConfig(sessionMeta?.model);
+  const {
+    provider,
+    apiKey,
+    apiBase,
+    model,
+    temperature,
+    timeoutMs
+  } = modelConfig;
 
   if (!apiKey) {
-    return fallbackTurn({ provider: "error", providerReason: "missing_api_key" });
+    const keyName = provider === "xai" ? "XAI_API_KEY" : "OPENAI_API_KEY";
+    return fallbackTurn({ provider: "error", providerReason: `missing_api_key:${keyName}` });
   }
 
   const runtimeMode = normalizeMode(sessionMeta.mode || sessionMeta?.storyContext?.mode || "");
@@ -1197,7 +1357,7 @@ export async function runStoryTurnStream({ turnIndex, input, sessionMeta, onNarr
       messages,
       onNarrativeDelta
     });
-    const parsed = parseModelOutput(fullContent, turnIndex, input, sessionMeta);
+    const parsed = parseModelOutput(fullContent, turnIndex, input, sessionMeta, provider);
     if (parsed?.failed && !String(parsed?.narrativeBlock || "").trim()) {
       const streamedNarrative = extractNarrativeVisibleText(fullContent).trim();
       if (streamedNarrative) {

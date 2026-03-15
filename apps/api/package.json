@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/server.js",
+    "dev": "node src/server.js",
+    "dev:watch": "node --watch src/server.js",
     "start": "node src/server.js",
     "db:init": "node src/scripts/init-db.js",
     "db:migrate": "node src/scripts/migrate-db.js",
@@ -12,9 +13,12 @@
     "db:smoke": "node src/scripts/db-smoke-check.js",
     "db:seed": "node src/scripts/seed-real-data.js",
     "db:seed:fast": "node src/scripts/seed-tail-fast.js",
-    "test:story-output": "node src/scripts/test-story-output.js"
+    "db:backfill:gameplay-signature": "node src/scripts/backfill-gameplay-signatures.js",
+    "test:story-output": "node src/scripts/test-story-output.js",
+    "media:migrate:data-url": "node src/scripts/migrate-data-urls-to-media.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1008.0",
     "pg": "^8.13.3"
   }
 }
