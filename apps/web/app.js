@@ -8289,6 +8289,14 @@ function nowClockText() {
   return `${h}:${m}`;
 }
 
+function formatInboxClock(dateLike) {
+  const dt = new Date(String(dateLike || "").trim());
+  if (Number.isNaN(dt.getTime())) return "刚刚";
+  const h = String(dt.getHours()).padStart(2, "0");
+  const m = String(dt.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
+}
+
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || "").trim());
 }
@@ -8577,6 +8585,11 @@ async function syncMessageInbox() {
     .map((item) => applyMessageConversationForceUnread(item))
     .map((item) => normalizeStoryInboxItem(item))
     .filter((item) => !shouldHideInboxConversationByDeletedState(item));
+  next.forEach((item) => {
+    const stamp = String(item?.lastMessageAt || item?.last_message_at || "").trim();
+    if (!stamp) return;
+    item.time = formatInboxClock(stamp);
+  });
   ensureMessageThreadPrefsLoaded();
   next.forEach((item) => {
     const cid = String(item?.id || "").trim();
