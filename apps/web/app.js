@@ -24112,6 +24112,7 @@ document.addEventListener("focusout", () => {
 async function startApp() {
   void initPwa();
   initPwaInstallExperience();
+  const standaloneMode = isRunningStandalone();
   hydratePlayBackgroundPreference();
   hydrateSelectedWorldId();
   const cachedUserId = String(hydrateAuthUserId() || "").trim();
@@ -24129,6 +24130,7 @@ async function startApp() {
   }
   const hasFullCache = authUserId ? tryHydrateFullCache(authUserId) : false;
   const hasCache = hasFullCache || tryHydrateFromCache(authUserId);
+  const canUseWarmCache = hasCache && !standaloneMode;
   if (!window.location.hash || window.location.hash === "#/") {
     window.location.hash = authUserId ? "#/theater/home" : "#/auth/login";
   }
@@ -24144,7 +24146,7 @@ async function startApp() {
   try {
     if (authUserId) {
       const currentHash = window.location.hash || "#/theater/home";
-      if (!hasCache) {
+      if (!canUseWarmCache) {
         const initialSections = getBootstrapSectionsForRoute(currentHash);
         initialSections.forEach((section) => {
           void fetchBootstrapSection(section, authUserId, { force: true })
@@ -24154,38 +24156,45 @@ async function startApp() {
             .catch(() => {});
         });
       }
-      if (hasCache) {
-        void bootstrapClientData(authUserId)
+      if (canUseWarmCache) {
+        void bootstrapClientData(authUserId, { force: standaloneMode })
           .then(() => {
             render();
           })
           .catch(() => {});
       } else {
-        await bootstrapClientData(authUserId);
+        await bootstrapClientData(authUserId, { force: true });
         render();
       }
       ensureSectionDataOnDemand(currentHash);
-      if (hasCache) {
+      if (canUseWarmCache) {
         scheduleBootstrapFullRefresh(authUserId, { delayMs: 520 });
       }
+      if (standaloneMode) {
+        void refreshBootstrapSectionsForRoute(currentHash, authUserId, { force: true })
+          .then(() => {
+            render();
+          })
+          .catch(() => {});
+      }
     } else {
-      await bootstrapClientData();
+      await bootstrapClientData("", { force: standaloneMode });
       render();
     }
   } catch (error) {
     if (authUserId) {
-      if (hasCache) {
+      if (canUseWarmCache) {
         // Keep cached UI responsive and retry in background.
         void bootstrapClientData(authUserId).catch(() => {});
         return;
       }
       try {
-        await bootstrapClientData();
+        await bootstrapClientData(authUserId, { force: true });
         render();
         return;
       } catch {}
     }
-    if (hasCache) return;
+    if (canUseWarmCache) return;
     app.innerHTML = `
       <section class="screen">
         <div class="auth-wrap">
