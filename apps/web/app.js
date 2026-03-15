@@ -3549,7 +3549,7 @@ function pageLogin() {
         <section class="login-page-card">
           <div class="login-page-brand">
             <img src="/assets/logo-v5.png" alt="爪马 Logo" loading="eager" fetchpriority="high" />
-            <h1>Drama抓马</h1>
+            <h1>Drama 抓马</h1>
             <p>请选择登录方式</p>
           </div>
           <div class="login-page-methods">
@@ -4486,7 +4486,7 @@ function renderExploreLoginModal(options = {}) {
         <section class="login-page-card">
           <div class="login-page-brand">
             <img src="/assets/logo-v5.png" alt="爪马 Logo" loading="eager" fetchpriority="high" />
-            <h1>Drama抓马</h1>
+            <h1>Drama 抓马</h1>
             <p>沉浸式剧情社区，探索、创作、开刷一次完成。</p>
           </div>
 
@@ -4547,7 +4547,7 @@ function renderExploreLoginModal(options = {}) {
         ${standalone ? "" : `<button class="login-modal-close" data-action="close-login-modal">×</button>`}
         <div class="login-modal-left">
           <div class="login-bubble">登录后推荐更懂你的内容</div>
-          <div class="login-mini-brand"><img src="/assets/logo-v5.png" alt="爪马 Logo" loading="eager" fetchpriority="high" /><span>Drama抓马</span></div>
+          <div class="login-mini-brand"><img src="/assets/logo-v5.png" alt="爪马 Logo" loading="eager" fetchpriority="high" /><span>Drama 抓马</span></div>
           <div class="login-qr-box">扫码区</div>
           <p>可用 Drama 或 微信扫码</p>
           <small>▶ 如何扫码登录</small>

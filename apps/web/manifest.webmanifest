@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Drama抓马",
-  "short_name": "Drama抓马",
-  "description": "Drama抓马 Web 应用",
+  "name": "Drama 抓马",
+  "short_name": "Drama 抓马",
+  "description": "Drama 抓马 Web 应用",
   "lang": "zh-CN",
   "start_url": "/",
   "scope": "/",
