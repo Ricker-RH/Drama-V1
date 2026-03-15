@@ -66,10 +66,6 @@ export async function listUserInbox({ userId, limit = 80 }) {
     left join messages m on m.id = c.last_message_id
     where cm.user_id = $1
       and cm.deleted_at is null
-      and not (
-        c.biz_type = 'story'
-        and coalesce(c.settings_json->>'worldCardId', '') = ''
-      )
     order by coalesce(c.last_message_at, c.updated_at) desc
     limit $2`,
     [userId, safeLimit]
