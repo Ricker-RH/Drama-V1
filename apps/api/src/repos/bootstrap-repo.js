@@ -1103,7 +1103,7 @@ export async function getBootstrapPayload(userId = null, mode = "core") {
         case
           when c.biz_type = 'story' then coalesce(
             nullif(c.avatar_url, ''),
-            nullif(wc_story.first_image_url, ''),
+            nullif(to_jsonb(wc_story)->>'first_image_url', ''),
             nullif(wc_story.cover_url, ''),
             ''
           )
@@ -1707,7 +1707,7 @@ export async function getBootstrapMessagesSectionPayload(userId = null) {
         case
           when c.biz_type = 'story' then coalesce(
             nullif(c.avatar_url, ''),
-            nullif(wc_story.first_image_url, ''),
+            nullif(to_jsonb(wc_story)->>'first_image_url', ''),
             nullif(wc_story.cover_url, ''),
             ''
           )

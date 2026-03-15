@@ -43,7 +43,7 @@ export async function listUserInbox({ userId, limit = 80 }) {
       case
         when c.biz_type = 'story' then coalesce(
           nullif(c.avatar_url, ''),
-          nullif(wc.first_image_url, ''),
+          nullif(to_jsonb(wc)->>'first_image_url', ''),
           nullif(wc.cover_url, ''),
           ''
         )
