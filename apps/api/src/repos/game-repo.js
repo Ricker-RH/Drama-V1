@@ -20,7 +20,7 @@ export async function getWorldCardRuntimeMeta(worldCardId) {
        chapter_label,
        gameplay_version,
        appearance_version
-     from world_cards
+     from world_cards w
      where id = $1
        and publish_status = 'published'
        and deleted_at is null

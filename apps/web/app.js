@@ -2198,7 +2198,7 @@ function persistPlaySessionHint({ worldId = "", sessionId = "", title = "" } = {
   const uid = String(userId || "").trim();
   const wid = String(worldId || "").trim();
   const sid = String(sessionId || "").trim();
-  if (!uid || !wid || !sid) return;
+  if (!uid || !wid || !sid || !isUuid(sid)) return;
   const map = readPlaySessionCache(uid);
   map[wid] = {
     worldId: wid,
@@ -2230,10 +2230,12 @@ function resolveLatestPlaySessionHintByWorld(worldId = "", userId = uiState.curr
   const cached = readPlaySessionCache(uid);
   const cacheHit = cached[wid] && typeof cached[wid] === "object" ? cached[wid] : null;
   const cacheSessionId = String(cacheHit?.sessionId || "").trim();
-  if (cacheSessionId) {
+  if (isUuid(cacheSessionId)) {
     bestSessionId = cacheSessionId;
     bestTitle = String(cacheHit?.title || "").trim();
     bestUpdatedAt = Number(cacheHit?.updatedAt || 0) || 0;
+  } else if (cacheSessionId) {
+    clearPlaySessionHint(wid, uid);
   }
 
   const inboxHit = MESSAGE_INBOX
@@ -2241,7 +2243,7 @@ function resolveLatestPlaySessionHintByWorld(worldId = "", userId = uiState.curr
       const itemWorldId = String(item?.worldId || "").trim();
       const itemSessionId = String(item?.sessionId || "").trim();
       if (!itemWorldId || itemWorldId !== wid) return false;
-      return Boolean(itemSessionId);
+      return isUuid(itemSessionId);
     })
     .sort((a, b) => resolveMessageLastInteractionTs(b) - resolveMessageLastInteractionTs(a))[0];
   if (inboxHit) {
@@ -2262,7 +2264,7 @@ function resolveLatestPlaySessionHintByWorld(worldId = "", userId = uiState.curr
     if (!meta || typeof meta !== "object") return;
     const metaWorldId = String(meta.worldId || "").trim();
     const metaSessionId = String(meta.sessionId || "").trim();
-    if (!metaSessionId || metaWorldId !== wid) return;
+    if (!isUuid(metaSessionId) || metaWorldId !== wid) return;
     const candidateUpdatedAt = Number(meta.updatedAt || 0) || 0;
     if (!bestSessionId || candidateUpdatedAt >= bestUpdatedAt) {
       bestSessionId = metaSessionId;
@@ -11486,6 +11488,10 @@ async function openPlaySessionFromSnapshot({
 }) {
   const sid = String(sessionId || "").trim();
   const wid = String(worldId || "").trim();
+  if (wid && sid && !isUuid(sid)) {
+    clearPlaySessionHint(wid, uiState.currentUserId);
+    return;
+  }
   if (!sid || !wid) return;
   if (!uiState.isLoggedIn || !uiState.currentUserId) {
     uiState.showLoginModal = true;
@@ -11846,6 +11852,10 @@ function ensurePlayResumeFromHint(world = getSelectedWorld()) {
   const hint = resolveLatestPlaySessionHintByWorld(worldId, uiState.currentUserId);
   const hintedSessionId = String(hint?.sessionId || "").trim();
   if (!hintedSessionId) return false;
+  if (!isUuid(hintedSessionId)) {
+    clearPlaySessionHint(worldId, uiState.currentUserId);
+    return false;
+  }
 
   uiState.playAutoResumeInFlight = true;
   setTimeout(() => {
@@ -11895,7 +11905,7 @@ function normalizePlaySessionCardPayload(payload = {}) {
   if (kind !== "play_session") return null;
   const sessionId = String(payload?.sessionId || payload?.sid || "").trim();
   const worldId = String(payload?.worldId || payload?.wid || "").trim();
-  if (!sessionId || !worldId) return null;
+  if (!sessionId || !worldId || !isUuid(sessionId)) return null;
   return {
     kind,
     sessionId,

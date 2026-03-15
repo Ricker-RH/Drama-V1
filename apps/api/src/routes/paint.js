@@ -139,6 +139,11 @@ function isDashScopeZImageModel(model = "") {
   return id.startsWith("z-image");
 }
 
+function isDashScopeModel(model = "") {
+  const id = String(model || "").trim().toLowerCase();
+  return id.startsWith("wan") || id.startsWith("z-image");
+}
+
 function parseJsonSafe(raw = "") {
   const text = String(raw || "").trim();
   if (!text) return {};
@@ -163,6 +168,14 @@ function extractProviderErrorMessage(resp, payload = {}, rawBody = "") {
   return `HTTP_${Number(resp?.status || 0) || 500}`;
 }
 
+function maskSecrets(raw = "") {
+  const text = String(raw || "");
+  if (!text) return "";
+  return text
+    .replace(/\b(sk|rk|pk)-[A-Za-z0-9_-]{10,}\b/g, "$1-***")
+    .replace(/\bBearer\s+[A-Za-z0-9._-]{12,}\b/gi, "Bearer ***");
+}
+
 function isInappropriateContentMessage(raw = "") {
   const msg = String(raw || "").toLowerCase();
   return (
@@ -177,13 +190,37 @@ function isInappropriateContentMessage(raw = "") {
   );
 }
 
-function humanizeImageError(raw = "", { apiBase = "", isDashScope = false } = {}) {
-  const msg = String(raw || "").trim();
+function humanizeImageError(raw = "", {
+  apiBase = "",
+  isDashScope = false,
+  model = ""
+} = {}) {
+  const msg = maskSecrets(String(raw || "").trim());
+  const lower = msg.toLowerCase();
   if (!msg) return "图片生成失败";
   if (msg === "NETWORK_UNREACHABLE") return "网络不可达，请检查本机网络或代理设置";
   if (msg === "REQUEST_TIMEOUT" || msg === "dashscope_task_timeout") return "生成超时，请稍后重试";
   if (msg === "DASHSCOPE_INAPPROPRIATE_CONTENT" || isInappropriateContentMessage(msg)) {
     return "提示词触发内容安全策略，已被拦截。请改成非敏感描述（避免成人、未成年人相关、血腥暴力、政治敏感等）后重试。";
+  }
+  if (
+    lower.includes("incorrect api key provided")
+    || lower.includes("invalid api key")
+    || lower.includes("invalid_api_key")
+    || lower.includes("you can find your api key")
+  ) {
+    if (!isDashScope && isDashScopeModel(model)) {
+      return "图片服务配置不匹配：当前使用了 DashScope 模型，但网关仍是 OpenAI。请在服务端设置 OPENAI_IMAGE_BASE_URL 为 DashScope compatible-mode 地址，并配置 OPENAI_IMAGE_API_KEY 或 DASHSCOPE_API_KEY。";
+    }
+    return "图片服务鉴权失败：API Key 无效或已过期。请在服务端更新 OPENAI_IMAGE_API_KEY / DASHSCOPE_API_KEY。";
+  }
+  if (
+    lower.includes("authentication")
+    || lower.includes("unauthorized")
+    || /\bhttp_401\b/i.test(msg)
+    || /\bhttp_403\b/i.test(msg)
+  ) {
+    return "图片服务鉴权失败：请检查服务端 API Key 是否正确、是否具备图像生成权限。";
   }
   if (msg === "dashscope_task_id_missing") return "任务创建成功但未返回 task_id，请稍后重试";
   if (msg === "dashscope_image_payload_missing") return "任务成功但未返回图片链接，请稍后重试";
@@ -597,7 +634,8 @@ export async function handlePaint(req, res, pathname) {
     if (!images.length) {
       const firstError = humanizeImageError(failures[0] || "image generation failed", {
         apiBase,
-        isDashScope: isDashScopeCompatibleBase(apiBase)
+        isDashScope: isDashScopeCompatibleBase(apiBase),
+        model
       });
       return json(res, 502, {
         code: "IMAGE_GENERATION_FAILED",
@@ -635,7 +673,8 @@ export async function handlePaint(req, res, pathname) {
   } catch (error) {
     const msg = humanizeImageError(error instanceof Error ? error.message : "image generation failed", {
       apiBase,
-      isDashScope: isDashScopeCompatibleBase(apiBase)
+      isDashScope: isDashScopeCompatibleBase(apiBase),
+      model
     });
     return json(res, 502, {
       code: "IMAGE_GENERATION_FAILED",

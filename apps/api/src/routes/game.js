@@ -26,6 +26,22 @@ const memorySessions = new Map();
 const memoryTurns = new Map();
 const VALID_MODES = new Set(["long_narrative", "short_narrative", "virtual_character"]);
 
+function isUuid(value = "") {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || "").trim()
+  );
+}
+
+function isMemorySessionId(value = "") {
+  return /^mem_[A-Za-z0-9_-]{6,}$/.test(String(value || "").trim());
+}
+
+function isSupportedSessionId(value = "", inMemory = false) {
+  const sid = String(value || "").trim();
+  if (!sid) return false;
+  return inMemory ? isMemorySessionId(sid) : isUuid(sid);
+}
+
 function normalizeMode(value) {
   const mode = String(value || "").trim().toLowerCase();
   return VALID_MODES.has(mode) ? mode : "";
@@ -536,6 +552,9 @@ export async function handleGame(req, res, pathname) {
       const userId = String(reqUrl.searchParams.get("userId") || "").trim();
       const limit = Number.parseInt(String(reqUrl.searchParams.get("limit") || "200"), 10);
       const inMemory = useMemoryStore();
+      if (!isSupportedSessionId(sessionId, inMemory)) {
+        return json(res, 404, { code: "SESSION_NOT_FOUND", message: "session not found" });
+      }
       const session = inMemory
         ? getMemorySessionById(sessionId)
         : await getGameSessionById(sessionId);
@@ -570,6 +589,9 @@ export async function handleGame(req, res, pathname) {
       const body = await parseBody(req);
       const userId = String(body?.userId || "").trim();
       const inMemory = useMemoryStore();
+      if (!isSupportedSessionId(pauseSessionId, inMemory)) {
+        return json(res, 404, { code: "SESSION_NOT_FOUND", message: "session not found" });
+      }
       const session = inMemory
         ? getMemorySessionById(pauseSessionId)
         : await getGameSessionById(pauseSessionId);
@@ -594,6 +616,9 @@ export async function handleGame(req, res, pathname) {
     }
     const requestMode = normalizeMode(body.mode || body?.storyContext?.mode);
     const inMemory = useMemoryStore();
+    if (!isSupportedSessionId(body.sessionId, inMemory)) {
+      return json(res, 404, { code: "SESSION_NOT_FOUND", message: "session not found" });
+    }
     const session = inMemory
       ? getMemorySessionById(body.sessionId)
       : await getGameSessionById(body.sessionId);
@@ -749,6 +774,9 @@ export async function handleGame(req, res, pathname) {
     }
     const requestMode = normalizeMode(body.mode || body?.storyContext?.mode);
     const inMemory = useMemoryStore();
+    if (!isSupportedSessionId(body.sessionId, inMemory)) {
+      return json(res, 404, { code: "SESSION_NOT_FOUND", message: "session not found" });
+    }
 
     const session = inMemory
       ? getMemorySessionById(body.sessionId)
